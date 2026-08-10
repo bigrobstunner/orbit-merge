@@ -170,6 +170,17 @@ html, body {
   text-shadow: 0 0 8px #ffd166, 0 0 14px #ffd166;
 }
 
+#ver {
+  position: fixed;
+  right: 8px;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 4px);
+  font-size: 9px;
+  font-weight: 700;
+  color: #8f86b8;
+  opacity: .5;
+  pointer-events: none;
+}
+
 #over, #welcome {
   position: fixed;
   inset: 0;
