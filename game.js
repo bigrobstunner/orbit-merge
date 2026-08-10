@@ -48,7 +48,8 @@ function layout() {
 
   C = { x: W / 2, y: H * 0.40 };
   dangerR = Math.min(W / 2 - 44, H * 0.27);
-  planetR = Math.max(28, dangerR * 0.21);
+  // the planet swells with each level, leaving less room to work with
+  planetR = Math.max(28, dangerR * 0.21) * (1 + 0.04 * Math.min(level - 1, 12));
   launcher = { x: W / 2, y: H - Math.max(96, H * 0.115) };
 
   stars = [];
@@ -115,7 +116,9 @@ function applyGravity() {
 // ---- Game state ---------------------------------------------------------
 let score = 0;
 let best = +(localStorage.getItem('om-best') || 0);
-let state = 'playing';
+let level = Math.max(1, +(localStorage.getItem('om-level') || 1));
+let goalTier = 4;
+let state = 'playing'; // 'playing' | 'clear' | 'over'
 let nextReadyAt = 0;
 let currentTier = 0, nextTier = 0;
 let discovered = new Set([0]);
@@ -128,6 +131,18 @@ let warning = false;
 const $ = id => document.getElementById(id);
 const scoreEl = $('score'), bestEl = $('best'), nextEl = $('next');
 const overEl = $('over'), finalEl = $('finalScore'), bestNoteEl = $('bestNote');
+const lvlEl = $('lvl'), overTitleEl = $('overTitle'), againEl = $('again');
+
+function computeGoal() {
+  goalTier = Math.min(4 + Math.floor((level - 1) / 2), MAX_TIER);
+}
+
+function updateLevelHud() {
+  lvlEl.textContent = 'LVL ' + level + ' · GOAL ' + TIERS[goalTier].emoji;
+  document.querySelectorAll('#chain span').forEach((s, i) => {
+    s.classList.toggle('goal', i === goalTier);
+  });
+}
 
 function randSpawnTier() { return Math.floor(Math.random() * (SPAWN_MAX_TIER + 1)); }
 
@@ -202,8 +217,27 @@ function processMerges() {
       const o = makeOrb(nt, mx, my);
       o.popAt = performance.now();
       markDiscovered(nt);
+      if (nt >= goalTier && state === 'playing') levelClear();
     }
   }
+}
+
+function levelClear() {
+  state = 'clear';
+  const bonus = 20 * level;
+  score += bonus;
+  scoreEl.textContent = score;
+  playLevelClear();
+  if (score > best) {
+    best = score;
+    localStorage.setItem('om-best', best);
+  }
+  bestEl.textContent = 'BEST ' + best;
+  overTitleEl.textContent = 'Level ' + level + ' Clear! 🎉';
+  finalEl.textContent = score;
+  bestNoteEl.textContent = '+' + bonus + ' level bonus';
+  againEl.textContent = 'Next Level';
+  overEl.classList.remove('hidden');
 }
 
 // ---- Aiming & firing ----------------------------------------------------
@@ -295,6 +329,7 @@ function checkLose(now) {
 function gameOver() {
   state = 'over';
   playGameOver();
+  overTitleEl.textContent = 'Game Over';
   finalEl.textContent = score;
   if (score > best) {
     best = score;
@@ -304,24 +339,46 @@ function gameOver() {
     bestNoteEl.textContent = 'Best: ' + best;
   }
   bestEl.textContent = 'BEST ' + best;
+  againEl.textContent = 'Try Again';
   overEl.classList.remove('hidden');
 }
 
-function restart() {
+// Rebuild the board for the current level: swollen planet + a ring of debris
+// orbs. Debris tiers alternate 0/1/2 so no two touching pieces can merge.
+function resetBoard() {
   orbs().forEach(b => Composite.remove(world, b));
   pendingMerges.length = 0;
   particles.length = 0;
   popups.length = 0;
-  score = 0;
-  scoreEl.textContent = '0';
   state = 'playing';
   nextReadyAt = 0;
   aiming = false;
+  computeGoal();
+  layout();
+  buildPlanet();
+  const n = Math.min(1 + level, 10);
+  for (let i = 0; i < n; i++) {
+    const t = (i === n - 1 && n % 3 === 1) ? 1 : i % 3;
+    const a = (i / n) * Math.PI * 2 - Math.PI / 2;
+    const d = planetR + orbRadius(t) + 2;
+    makeOrb(t, C.x + Math.cos(a) * d, C.y + Math.sin(a) * d);
+  }
+  for (let i = 0; i < 90; i++) tickPhysics(); // settle debris before play
   rollQueue();
+  updateLevelHud();
   overEl.classList.add('hidden');
 }
 
-$('again').addEventListener('click', restart);
+againEl.addEventListener('click', () => {
+  if (state === 'clear') {
+    level++;
+    localStorage.setItem('om-level', level);
+  } else {
+    score = 0;
+    scoreEl.textContent = '0';
+  }
+  resetBoard();
+});
 
 // ---- Effects ------------------------------------------------------------
 function burst(x, y, color, n) {
@@ -371,6 +428,9 @@ function playMerge(tier) {
   if (tier === MAX_TIER) { tone(523, 0.5, 'triangle', 0.2, 1568); }
 }
 function playGameOver() { tone(340, 0.6, 'sawtooth', 0.1, 80); }
+function playLevelClear() {
+  [523, 659, 784, 1046].forEach((f, i) => setTimeout(() => tone(f, 0.2, 'triangle', 0.18), i * 110));
+}
 
 // ---- Rendering ----------------------------------------------------------
 function drawOrb(x, y, angle, tier, r, scale) {
@@ -559,8 +619,6 @@ function loop(now) {
 
 // ---- Boot ---------------------------------------------------------------
 function boot() {
-  layout();
-  buildPlanet();
   const chainEl = $('chain');
   chainEl.innerHTML = '';
   TIERS.forEach((t, i) => {
@@ -570,7 +628,7 @@ function boot() {
     chainEl.appendChild(s);
   });
   bestEl.textContent = 'BEST ' + best;
-  rollQueue();
+  resetBoard();
   requestAnimationFrame(loop);
 }
 
@@ -593,7 +651,10 @@ window.__dbg = {
   geom: () => ({ C, dangerR, planetR, launcher }),
   score: () => score,
   state: () => state,
-  restart,
+  level: () => level,
+  goalTier: () => goalTier,
+  setLevel(n) { level = Math.max(1, n | 0); localStorage.setItem('om-level', level); resetBoard(); },
+  restart: resetBoard,
   aim(x, y, on) { aiming = !!on; aimPt = { x, y }; },
   // Drive the simulation synchronously (rAF pauses in hidden tabs).
   step(ms) {
