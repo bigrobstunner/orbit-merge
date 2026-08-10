@@ -60,20 +60,9 @@ html, body {
   margin-top: 2px;
 }
 
-#powerups {
-  position: fixed;
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 62px);
-  left: 0;
-  right: 0;
-  display: flex;
-  justify-content: center;
-  gap: 150px;
-  pointer-events: none;
-}
-
 #powerups button {
   pointer-events: auto;
-  position: relative;
+  position: fixed;
   background: rgba(255,255,255,.07);
   border: 2px solid rgba(178,152,220,.5);
   border-radius: 14px;
@@ -82,6 +71,10 @@ html, body {
   height: 46px;
   cursor: pointer;
 }
+
+#pwWild { left: 22px; bottom: calc(env(safe-area-inset-bottom, 0px) + 62px); }
+#pwEva { left: 22px; bottom: calc(env(safe-area-inset-bottom, 0px) + 118px); }
+#pwSmash { right: 22px; bottom: calc(env(safe-area-inset-bottom, 0px) + 62px); }
 
 #powerups button b {
   position: absolute;
@@ -130,7 +123,7 @@ html, body {
 
 #next { font-size: 24px; }
 
-#mute {
+#mute, #speed {
   pointer-events: auto;
   background: rgba(255,255,255,.07);
   border: 2px solid rgba(178,152,220,.5);
@@ -139,6 +132,12 @@ html, body {
   width: 42px;
   height: 42px;
   cursor: pointer;
+}
+
+#speed {
+  font-size: 14px;
+  font-weight: 800;
+  color: #f2ecff;
 }
 
 #chain {
@@ -191,6 +190,18 @@ html, body {
 
 #tip.hidden { display: none; }
 
+#tip.log { border-color: #63e6be; box-shadow: 0 0 20px rgba(99, 230, 190, .25); }
+
+#tip.log::before {
+  content: "CAPTAIN'S LOG";
+  display: block;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  color: #63e6be;
+  margin-bottom: 4px;
+}
+
 #ver {
   position: fixed;
   right: 8px;
@@ -202,7 +213,7 @@ html, body {
   pointer-events: none;
 }
 
-#over, #welcome {
+#over, #welcome, #letter {
   position: fixed;
   inset: 0;
   background: rgba(4, 5, 20, .6);
@@ -212,7 +223,32 @@ html, body {
   z-index: 10;
 }
 
-#over.hidden, #welcome.hidden { display: none; }
+#over.hidden, #welcome.hidden, #letter.hidden { display: none; }
+
+#letter { background: rgba(4, 5, 20, .85); z-index: 12; }
+
+#letter .panel { max-width: 80vw; }
+
+#letterBody {
+  font-size: 14px;
+  color: #f2ecff;
+  line-height: 1.7;
+  margin-bottom: 20px;
+  white-space: pre-line;
+  text-align: left;
+}
+
+#letterBtn {
+  background: #7b5cd6;
+  border: none;
+  border-radius: 16px;
+  color: #fff;
+  font-size: 17px;
+  font-weight: 800;
+  padding: 12px 30px;
+  cursor: pointer;
+  box-shadow: 0 4px 0 #5a3fb0;
+}
 
 #welcome { background: rgba(4, 5, 20, .75); z-index: 11; }
 
@@ -256,7 +292,7 @@ html, body {
 
 #welcome .panel { max-width: 78vw; }
 
-#over .panel, #welcome .panel {
+#over .panel, #welcome .panel, #letter .panel {
   background: #171a45;
   border: 2px solid rgba(178,152,220,.6);
   border-radius: 24px;

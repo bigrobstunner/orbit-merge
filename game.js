@@ -31,18 +31,31 @@ const STEP = 1000 / 60;
 const COMBO_WINDOW = 1800;    // sim-ms between merges that keeps a combo alive
 const INV_CAP = 3;            // max held of each special
 
+// ROB: this is the level-100 letter. Edit freely; she sees it exactly once,
+// after beating The Gauntlet. Line breaks are preserved.
+const LETTER_TEXT = `Lisa.
+
+You just relit an entire sky. A hundred levels, and you never stopped.
+
+I built this little universe because you are the center of mine. I even gave myself a crown, but we both know who actually runs this place.
+
+Keep going if you want. The sky is yours now.
+
+Love, the planet
+(Rob)`;
+
 // ---- Worlds: one theme per decade of levels -----------------------------
 const WORLDS = [
-  { key: 'calm',       label: '' },
-  { key: 'heavy',      label: 'HEAVY WORLD' },
-  { key: 'light',      label: 'LIGHT WORLD' },
-  { key: 'drift',      label: 'DRIFTING WORLD' },
-  { key: 'moon',       label: 'MOON WORLD' },
-  { key: 'binary',     label: 'BINARY WORLD' },
-  { key: 'heavymoon',  label: 'HEAVY MOON' },
-  { key: 'driftlight', label: 'LIGHT DRIFT' },
-  { key: 'binarymoon', label: 'BINARY MOON' },
-  { key: 'gauntlet',   label: 'THE GAUNTLET' },
+  { key: 'calm',       label: '',               log: 'Log 1: The sky went dark, so I suited up. Someone has to relight it.' },
+  { key: 'heavy',      label: 'HEAVY WORLD',    log: 'Log 2: The Heavy Deep. Everything falls twice as hard here, including me.' },
+  { key: 'light',      label: 'LIGHT WORLD',    log: 'Log 3: The Shallows. Almost no pull. Shots drift like seeds on the wind.' },
+  { key: 'drift',      label: 'DRIFTING WORLD', log: 'Log 4: The planet will not sit still today. Typical.' },
+  { key: 'moon',       label: 'MOON WORLD',     log: 'Log 5: Now there is a moon photobombing my shots.' },
+  { key: 'binary',     label: 'BINARY WORLD',   log: 'Log 6: Two planets. Two! One was already plenty to orbit.' },
+  { key: 'heavymoon',  label: 'HEAVY MOON',     log: 'Log 7: A heavy sky and that moon again. It follows me.' },
+  { key: 'driftlight', label: 'LIGHT DRIFT',    log: 'Log 8: Featherweight sky, restless planet. Aim like a whisper.' },
+  { key: 'binarymoon', label: 'BINARY MOON',    log: 'Log 9: Twin planets and the moon. The whole family is here.' },
+  { key: 'gauntlet',   label: 'THE GAUNTLET',   log: 'Log 10: The Gauntlet. Everything the dark has left. Light it all.' },
 ];
 
 function levelConfig(lv) {
@@ -59,7 +72,7 @@ function levelConfig(lv) {
     drift: k.includes('drift') || k === 'gauntlet',
     moon: k.includes('moon'),
     binary: k.includes('binary') || k === 'gauntlet',
-    label: WORLDS[dec].label,
+    label: lv > 100 ? 'THE GAUNTLET ∞' : WORLDS[dec].label,
   };
 }
 
@@ -74,16 +87,19 @@ let stars = [];
 let level = Math.max(1, +(localStorage.getItem('om-level') || 1));
 let cfg = levelConfig(level);
 
+let degenerateBoot = false;
+
 function layout() {
   dpr = Math.min(window.devicePixelRatio || 1, 3);
   W = window.innerWidth;
   H = window.innerHeight;
+  if (W < 100 || H < 100) degenerateBoot = true; // hidden/zero-size viewport at load
   canvas.width = W * dpr;
   canvas.height = H * dpr;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
   C = { x: W / 2, y: H * 0.40 };
-  dangerR = Math.min(W / 2 - 44, H * 0.27);
+  dangerR = Math.max(80, Math.min(W / 2 - 44, H * 0.27));
   planetR = Math.max(28, dangerR * 0.21) * cfg.planetScale;
   launcher = { x: W / 2, y: H - Math.max(96, H * 0.115) };
 
@@ -275,6 +291,12 @@ function rollQueue() {
 
 function updateNextChip() {
   nextEl.textContent = nextMystery ? '❓' : TIERS[nextTier].emoji;
+  // color the chip like the incoming orb so what's next reads at a glance
+  const wrap = $('nextWrap');
+  const col = nextMystery ? '#c77dff' : TIERS[nextTier].color;
+  wrap.style.borderColor = col;
+  wrap.style.background = col + '33';
+  wrap.style.boxShadow = '0 0 14px ' + col + '66';
   if (nextMystery) tip('mystery', 'A Mystery Orb ❓ is coming. Nobody knows what it does until it touches something...');
 }
 
@@ -333,24 +355,79 @@ const tipQueue = [];
 let tipTimer = null;
 const tipEl = $('tip'), tipTextEl = $('tipText');
 
-function tip(id, text) {
+function tip(id, text, log) {
   if (seenTips.has(id)) return;
   seenTips.add(id);
   localStorage.setItem('om-tips', JSON.stringify([...seenTips]));
-  tipQueue.push(text);
+  tipQueue.push({ text, log });
   if (tipEl.classList.contains('hidden')) showNextTip();
 }
 
 function showNextTip() {
   clearTimeout(tipTimer);
-  const text = tipQueue.shift();
-  if (!text) { tipEl.classList.add('hidden'); return; }
-  tipTextEl.textContent = text;
+  const item = tipQueue.shift();
+  if (!item) { tipEl.classList.add('hidden'); return; }
+  tipTextEl.textContent = item.text;
+  tipEl.classList.toggle('log', !!item.log);
   tipEl.classList.remove('hidden');
   tipTimer = setTimeout(showNextTip, 8000);
 }
 
 tipEl.addEventListener('click', showNextTip);
+
+// ---- Astronaut Lisa -----------------------------------------------------
+// One flyby at a time: {x0,y0,x1,y1,t0,dur,carry,onArrive}
+let lisaTrip = null;
+
+function lisaFly(x0, y0, x1, y1, dur, carry, onArrive) {
+  // A superseded trip must still deliver its payload (orb removal, gift, etc.)
+  if (lisaTrip && lisaTrip.onArrive) lisaTrip.onArrive();
+  lisaTrip = { x0, y0, x1, y1, t0: performance.now(), dur, carry, onArrive };
+}
+
+function drawAstronaut(x, y, s, now) {
+  ctx.save();
+  ctx.translate(x, y + Math.sin(now / 300) * 2);
+  ctx.scale(s, s);
+  ctx.fillStyle = '#8f86b8'; // jetpack
+  ctx.fillRect(-9, -2, 4, 10);
+  ctx.fillStyle = '#f2ecff'; // suit
+  ctx.beginPath();
+  ctx.roundRect(-6, 0, 12, 14, 5);
+  ctx.fill();
+  ctx.beginPath(); // helmet
+  ctx.arc(0, -6, 8, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#ffd166'; // visor
+  ctx.beginPath();
+  ctx.arc(1.5, -6, 5, -0.5 * Math.PI, 0.5 * Math.PI);
+  ctx.fill();
+  ctx.restore();
+}
+
+function renderLisa(now) {
+  if (!lisaTrip) return;
+  const t = (now - lisaTrip.t0) / lisaTrip.dur;
+  if (t >= 1) {
+    const cb = lisaTrip.onArrive;
+    lisaTrip = null;
+    if (cb) cb();
+    return;
+  }
+  const e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+  const x = lisaTrip.x0 + (lisaTrip.x1 - lisaTrip.x0) * e;
+  const y = lisaTrip.y0 + (lisaTrip.y1 - lisaTrip.y0) * e;
+  if (frame % 2 === 0) {
+    particles.push({ x: x - 10, y: y + 6, vx: -1 - Math.random(), vy: (Math.random() - 0.5) * 1.5, life: 0.35, color: '#ffd166' });
+  }
+  drawAstronaut(x, y, 1.6, now);
+  if (lisaTrip.carry) {
+    ctx.font = '18px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(lisaTrip.carry, x + 18, y + 8);
+  }
+}
 
 // ---- Specials inventory -------------------------------------------------
 function saveInv() { localStorage.setItem('om-inv', JSON.stringify(inv)); }
@@ -370,6 +447,10 @@ function earnSpecial(kind) {
   saveInv();
   updatePw();
   splash(kind === 'wild' ? '🌈 WILD ORB EARNED' : '💥 SMASHER EARNED');
+  if (!lisaTrip) { // Lisa delivers it
+    lisaFly(W + 30, H * 0.55, W / 2 + (kind === 'wild' ? -150 : 150), H - 130, 1400,
+      kind === 'wild' ? '🌈' : '💥');
+  }
   if (kind === 'wild') tip('wild', 'You earned a Wild Orb 🌈. Tap it next to the launcher, then fire. It merges with whatever it touches.');
   else tip('smash', 'You earned a Smasher 💥. Tap it next to the launcher, then fire. It destroys whatever it hits.');
 }
@@ -378,8 +459,56 @@ for (const kind of ['wild', 'smash']) {
   pwEls[kind].addEventListener('click', () => {
     if (state !== 'playing' || !inv[kind]) return;
     armed = armed === kind ? null : kind;
+    evaArmed = false;
     updatePw();
+    updateEva();
   });
+}
+
+// ---- EVA rescue: once per level, Lisa carries away an orb you tap -------
+let evaLeft = 1;
+let evaArmed = false;
+const evaEl = $('pwEva');
+
+function updateEva() {
+  evaEl.querySelector('b').textContent = evaLeft;
+  evaEl.classList.toggle('empty', evaLeft === 0);
+  evaEl.classList.toggle('armed', evaArmed);
+}
+
+evaEl.addEventListener('click', () => {
+  if (state !== 'playing' || !evaLeft) return;
+  evaArmed = !evaArmed;
+  if (evaArmed) {
+    armed = null;
+    updatePw();
+    tip('eva', 'EVA! Tap any orb and Lisa will fly out and carry it away. Once per level.');
+  }
+  updateEva();
+});
+
+function tryEva(x, y) {
+  let best = null, bestD = 70;
+  for (const o of orbs()) {
+    if (o.dead) continue;
+    const d = Math.hypot(o.position.x - x, o.position.y - y) - o.orbR;
+    if (d < bestD) { bestD = d; best = o; }
+  }
+  if (!best) return false; // stay armed, they missed
+  evaArmed = false;
+  evaLeft--;
+  updateEva();
+  best.dead = true; // no merging while she is en route
+  const target = best;
+  lisaFly(launcher.x, launcher.y - 30, target.position.x, target.position.y, 700, null, () => {
+    const tx = target.position.x, ty = target.position.y;
+    const glyph = target.special ? SPECIAL_LOOKS[target.special].glyph : TIERS[target.tier].emoji;
+    burst(tx, ty, '#f2ecff', 16);
+    Composite.remove(world, target);
+    playFire();
+    lisaFly(tx, ty, -50, -60, 900, glyph);
+  });
+  return true;
 }
 
 // ---- Combos & merging ---------------------------------------------------
@@ -594,6 +723,7 @@ canvas.addEventListener('pointermove', e => {
 canvas.addEventListener('pointerup', () => {
   if (!aiming || state !== 'playing') return;
   aiming = false;
+  if (evaArmed) { tryEva(aimPt.x, aimPt.y); return; }
   fireToward(aimPt.x, aimPt.y);
 });
 
@@ -673,14 +803,15 @@ function checkLose(now) {
     if (now - o.bornAt < NEW_ORB_GRACE) continue;
     const d = Math.hypot(o.position.x - C.x, o.position.y - C.y);
     const speed = Math.hypot(o.velocity.x, o.velocity.y);
-    const outside = d + o.orbR > ringR;
+    // Half-ball buffer: an orb is only out once its CENTER crosses the ring
+    const outside = d > ringR;
     if (outside && speed < SETTLED_SPEED) {
       danger = true;
       if (!o.overSince) o.overSince = now;
       else if (now - o.overSince > LOSE_GRACE) return gameOver();
     } else {
       o.overSince = null;
-      if (!outside && d + o.orbR > ringR - 30) danger = true;
+      if (!outside && d > ringR - 30) danger = true;
     }
   }
   if (danger) tip('danger', 'Careful! An orb resting outside the ring for too long ends the run.');
@@ -694,6 +825,7 @@ function levelClear() {
   shake(7);
   setMood('wow', 3500);
   playLevelClear();
+  lisaFly(-30, C.y - dangerR - 70, W + 30, C.y - dangerR - 90, 1600, '⭐'); // victory pass
   for (let i = 0; i < 6; i++) { // fireworks around the cluster
     const a = (i / 6) * Math.PI * 2;
     burst(C.x + Math.cos(a) * ringR * 0.6, C.y + Math.sin(a) * ringR * 0.6,
@@ -710,6 +842,12 @@ function levelClear() {
   bestEl.textContent = 'BEST ' + best;
   setTimeout(() => {
     if (state !== 'clear') return; // board was reset while celebrating
+    if (level === 100 && !localStorage.getItem('om-letter-seen')) {
+      localStorage.setItem('om-letter-seen', '1');
+      $('letterBody').textContent = LETTER_TEXT;
+      $('letter').classList.remove('hidden');
+      return;
+    }
     overTitleEl.textContent = 'Level ' + level + ' Clear! 🎉';
     finalEl.textContent = score;
     bestNoteEl.textContent = '+' + bonus + ' level bonus';
@@ -717,6 +855,13 @@ function levelClear() {
     overEl.classList.remove('hidden');
   }, 1400);
 }
+
+$('letterBtn').addEventListener('click', () => {
+  $('letter').classList.add('hidden');
+  level++;
+  localStorage.setItem('om-level', level);
+  resetBoard();
+});
 
 function gameOver() {
   state = 'over';
@@ -773,7 +918,11 @@ function resetBoard() {
   updateLevelHud();
   updatePw();
   overEl.classList.add('hidden');
+  evaLeft = 1;
+  updateEva();
   splash('LEVEL ' + level + (cfg.label ? ' · ' + cfg.label : '') + (cfg.collapse ? ' · SKY COLLAPSE!' : ''));
+  const dec = Math.min(Math.floor((level - 1) / 10), 9);
+  tip('log-w' + dec, WORLDS[dec].log, true);
   if (cfg.label) tip('world', 'New world! The physics change every 10 levels. The label under your score says what you are flying in.');
   if (cfg.collapse) tip('collapse', 'SKY COLLAPSE! The ring is shrinking on this boss level. Merging pushes it back out.');
 }
@@ -851,17 +1000,17 @@ function drawOrb(x, y, angle, tier, r, scale) {
   if (scale !== 1) ctx.scale(scale, scale);
   const c = TIERS[tier];
   const glow = ctx.createRadialGradient(0, 0, r * 0.2, 0, 0, r * 1.45);
-  glow.addColorStop(0, c.color + '55');
-  glow.addColorStop(0.7, c.color + '22');
+  glow.addColorStop(0, c.color + '99');
+  glow.addColorStop(0.7, c.color + '44');
   glow.addColorStop(1, c.color + '00');
   ctx.beginPath();
   ctx.arc(0, 0, r * 1.45, 0, Math.PI * 2);
   ctx.fillStyle = glow;
   ctx.fill();
   const grad = ctx.createRadialGradient(-r * 0.3, -r * 0.3, r * 0.1, 0, 0, r);
-  grad.addColorStop(0, '#ffffff33');
-  grad.addColorStop(0.4, c.color + '55');
-  grad.addColorStop(1, c.color + '45');
+  grad.addColorStop(0, '#ffffffaa');
+  grad.addColorStop(0.35, c.color + 'e6');
+  grad.addColorStop(1, c.color);
   ctx.beginPath();
   ctx.arc(0, 0, r, 0, Math.PI * 2);
   ctx.fillStyle = grad;
@@ -1078,7 +1227,7 @@ function render(now) {
   }
 
   // aim preview
-  if (aiming && state === 'playing' && now >= nextReadyAt) {
+  if (aiming && !evaArmed && state === 'playing' && now >= nextReadyAt) {
     const pts = previewPath(aimPt.x, aimPt.y);
     ctx.fillStyle = '#ffd166';
     pts.forEach((p, i) => {
@@ -1106,6 +1255,25 @@ function render(now) {
     } else {
       drawOrb(launcher.x, launcher.y - orbRadius(currentTier) * 0.2, 0, currentTier, orbRadius(currentTier), 1);
     }
+  }
+  // next-orb preview beside the launcher: color first, symbol second
+  if (state === 'playing') {
+    const nx = launcher.x + 62, ny = launcher.y + 2;
+    const ncol = nextMystery ? '#c77dff' : TIERS[nextTier].color;
+    ctx.beginPath();
+    ctx.arc(nx, ny, 15, 0, Math.PI * 2);
+    ctx.fillStyle = ncol;
+    ctx.fill();
+    ctx.strokeStyle = '#ffffff66';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.font = '13px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(nextMystery ? '❓' : TIERS[nextTier].emoji, nx, ny + 1);
+    ctx.font = '800 8px -apple-system, sans-serif';
+    ctx.fillStyle = '#8f86b8';
+    ctx.fillText('NEXT', nx, ny - 24);
   }
 
   // particles
@@ -1153,8 +1321,23 @@ function render(now) {
     ctx.restore();
   }
   ctx.globalAlpha = 1;
+  renderLisa(now);
   ctx.restore();
 }
+
+// ---- Game speed (Lisa's pick: faster orbits) ----------------------------
+const SPEEDS = [1, 1.5, 2];
+let speedMul = +(localStorage.getItem('om-speed') || 1);
+if (!SPEEDS.includes(speedMul)) speedMul = 1;
+const speedBtn = $('speed');
+
+function updateSpeedBtn() { speedBtn.textContent = speedMul + 'x'; }
+
+speedBtn.addEventListener('click', () => {
+  speedMul = SPEEDS[(SPEEDS.indexOf(speedMul) + 1) % SPEEDS.length];
+  localStorage.setItem('om-speed', speedMul);
+  updateSpeedBtn();
+});
 
 // ---- Main loop ----------------------------------------------------------
 let lastT = performance.now();
@@ -1162,7 +1345,7 @@ let acc = 0;
 
 function loop(now) {
   requestAnimationFrame(loop);
-  acc += Math.min(now - lastT, 100);
+  acc += Math.min(now - lastT, 100) * speedMul;
   lastT = now;
   while (acc >= STEP) {
     if (state === 'playing') tickPhysics();
@@ -1189,21 +1372,44 @@ function boot() {
   bestEl.textContent = 'BEST ' + best;
   resetBoard();
   const AIM_TIP = 'Touch and drag to aim. The gold dots show how your shot will curve. Release to fire.';
+  // Daily gift: first launch each day, Lisa flies in with a present
+  const deliverGift = () => {
+    const today = new Date().toDateString();
+    if (localStorage.getItem('om-gift-day') === today) return;
+    localStorage.setItem('om-gift-day', today);
+    const kind = new Date().getDate() % 2 ? 'wild' : 'smash';
+    setTimeout(() => {
+      if (state !== 'playing') return;
+      lisaFly(-30, H * 0.3, C.x, C.y - dangerR - 60, 1800, '🎁', () => {
+        splash('DAILY DELIVERY!');
+        earnSpecial(kind);
+      });
+    }, 1500);
+  };
   if (!localStorage.getItem('om-welcomed')) {
     $('welcome').classList.remove('hidden');
   } else {
     tip('aim', AIM_TIP);
+    deliverGift();
   }
   $('begin').addEventListener('click', () => {
     localStorage.setItem('om-welcomed', '1');
     $('welcome').classList.add('hidden');
     unlockAudio();
     tip('aim', AIM_TIP);
+    deliverGift();
   });
   requestAnimationFrame(loop);
 }
 
-window.addEventListener('resize', () => { layout(); buildPlanets(); });
+window.addEventListener('resize', () => {
+  layout();
+  buildPlanets();
+  if (degenerateBoot && W >= 100 && H >= 100) {
+    degenerateBoot = false;
+    resetBoard(); // the zero-size boot spawned garbage geometry; start clean
+  }
+});
 
 if ('serviceWorker' in navigator && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
   navigator.serviceWorker.register('sw.js').catch(() => {});
@@ -1230,6 +1436,11 @@ window.__dbg = {
   armMystery() { currentMystery = true; },
   resetTips() { seenTips.clear(); localStorage.removeItem('om-tips'); },
   grant: earnSpecial,
+  eva: () => ({ left: evaLeft, armed: evaArmed }),
+  tryEva,
+  lisaFlying: () => !!lisaTrip,
+  resetGift() { localStorage.removeItem('om-gift-day'); },
+  resetLetter() { localStorage.removeItem('om-letter-seen'); },
   tipVisible: () => !tipEl.classList.contains('hidden') ? tipTextEl.textContent : null,
   score: () => score,
   state: () => state,
