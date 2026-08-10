@@ -51,6 +51,7 @@ function levelConfig(lv) {
   const k = WORLDS[dec].key;
   return {
     goalTier: Math.min(4 + Math.floor(p / 3) + (p === 9 ? 1 : 0) + (dec >= 6 ? 1 : 0), 9),
+    collapse: p === 9 && dec >= 1, // boss levels: the sky slowly contracts
     debris: Math.min(2 + Math.floor(lv / 2), 12),
     debrisMaxTier: Math.min(2 + Math.floor(dec / 2), 4),
     planetScale: 1 + Math.min(0.30, dec * 0.04 + p * 0.008),
@@ -211,6 +212,10 @@ function applyGravity() {
 function tickPhysics() {
   simTime += STEP;
   positionCelestials();
+  if (cfg.collapse && state === 'playing' && !settling) {
+    ringTarget = Math.max(dangerR * 0.70, ringTarget - 1.1 * STEP / 1000);
+  }
+  ringR += (ringTarget - ringR) * 0.08;
   applyGravity();
   Engine.update(engine, STEP);
 }
@@ -221,6 +226,7 @@ let best = +(localStorage.getItem('om-best') || 0);
 let state = 'playing'; // 'playing' | 'clear' | 'over'
 let nextReadyAt = 0;
 let currentTier = 0, nextTier = 0;
+let currentMystery = false, nextMystery = false;
 let discovered = new Set([0]);
 let settling = false; // silent merges while debris settles at level start
 const pendingMerges = [];
@@ -232,6 +238,12 @@ let frame = 0;
 let warning = false;
 let comboCount = 0, comboLastAt = -1e9;
 let shakeUntil = 0, shakeAmp = 0;
+// The catch area is alive: merges push ringTarget outward (capped at dangerR),
+// Sky Collapse bosses pull it back in. ringR eases toward ringTarget.
+let ringR = 0, ringTarget = 0;
+let ringGrowAt = -1e9;
+let ringFlashUntil = 0;
+let forcedMystery = null; // test hook: next mystery resolution uses this roll
 let moodType = 'sleep', moodUntil = 0;
 const MOOD_PRIORITY = { sleep: 0, worry: 1, happy: 2, wow: 3 };
 
@@ -251,10 +263,23 @@ const pwEls = { wild: $('pwWild'), smash: $('pwSmash') };
 
 function randSpawnTier() { return Math.floor(Math.random() * (SPAWN_MAX_TIER + 1)); }
 
+const MYSTERY_CHANCE = 0.08;
+
 function rollQueue() {
   currentTier = randSpawnTier();
   nextTier = randSpawnTier();
-  nextEl.textContent = TIERS[nextTier].emoji;
+  currentMystery = false;
+  nextMystery = Math.random() < MYSTERY_CHANCE;
+  updateNextChip();
+}
+
+function updateNextChip() {
+  nextEl.textContent = nextMystery ? '❓' : TIERS[nextTier].emoji;
+}
+
+function ringGrow(amt) {
+  ringTarget = Math.min(dangerR, ringTarget + amt);
+  ringGrowAt = performance.now();
 }
 
 function addScore(pts, x, y, combo) {
@@ -404,6 +429,7 @@ function completeMerge(tier, mx, my) {
     return;
   }
   burst(mx, my, TIERS[tier].color, tier === MAX_TIER ? 70 : 14 + tier * 3);
+  ringGrow(2 + tier * 1.1);
   const combo = bumpCombo();
   addScore(TIERS[tier].pts * combo, mx, my, combo);
   playMerge(tier, combo);
@@ -437,6 +463,11 @@ function processMerges() {
     const [s, other] = pendingSpecials.shift();
     const sx = s.position.x, sy = s.position.y;
     Composite.remove(world, s);
+    if (s.special === 'mystery') {
+      if (other) other.dead = false; // most outcomes leave the touched orb alive
+      resolveMystery(other, sx, sy);
+      continue;
+    }
     if (!other) {
       // hit a planet or the moon: wild fizzles into a sparkle, smasher poofs
       if (s.special === 'wild') {
@@ -461,6 +492,55 @@ function processMerges() {
       shake(6);
       playSmash();
     }
+  }
+}
+
+// Mystery outcomes: reveal 45% / wild 25% / boom 12% / star gift 10% / jackpot 8%
+function resolveMystery(other, sx, sy) {
+  let roll = forcedMystery !== null ? forcedMystery : Math.random();
+  forcedMystery = null;
+  if (!other && roll >= 0.45 && roll < 0.82) roll = 0.2; // partner-needing outcomes fall back to reveal
+  if (roll < 0.45) {
+    const t = 1 + Math.floor(Math.random() * 4);
+    const pos = clampOutsidePlanets(sx, sy, orbRadius(t));
+    const o = makeOrb(t, pos.x, pos.y);
+    o.popAt = performance.now();
+    splash('MYSTERY: ' + TIERS[t].emoji);
+    burst(sx, sy, '#c77dff', 16);
+  } else if (roll < 0.70) {
+    const t = other.tier, ox = other.position.x, oy = other.position.y;
+    Composite.remove(world, other);
+    splash('MYSTERY: WILD!');
+    burst(ox, oy, '#ffffff', 22);
+    completeMerge(t, ox, oy);
+  } else if (roll < 0.82) {
+    splash('MYSTERY: BOOM!');
+    const targets = orbs().filter(o => !o.special && !o.dead)
+      .map(o => ({ o, d: Math.hypot(o.position.x - sx, o.position.y - sy) }))
+      .sort((a, b) => a.d - b.d)
+      .slice(0, 3);
+    for (const { o } of targets) {
+      burst(o.position.x, o.position.y, '#ff6b6b', 18);
+      addScore(5, o.position.x, o.position.y, 1);
+      Composite.remove(world, o);
+    }
+    shake(8);
+    playSmash();
+  } else if (roll < 0.92) {
+    splash('MYSTERY: +75');
+    addScore(75, sx, sy, 1);
+    burst(sx, sy, '#ffd166', 26);
+  } else {
+    const t = 6;
+    const pos = clampOutsidePlanets(sx, sy, orbRadius(t));
+    const o = makeOrb(t, pos.x, pos.y);
+    o.popAt = performance.now();
+    markDiscovered(t);
+    splash('JACKPOT! 🌕');
+    setMood('wow', 3000);
+    shake(8);
+    burst(sx, sy, '#ffe066', 40);
+    if (t >= cfg.goalTier && state === 'playing') levelClear();
   }
 }
 
@@ -503,11 +583,17 @@ function fireToward(tx, ty) {
     playFire();
     return true; // specials do not consume the regular queue
   }
-  makeOrb(currentTier, launcher.x, launcher.y - orbRadius(currentTier) * 0.2, vx, vy);
+  if (currentMystery) {
+    makeSpecial('mystery', launcher.x, launcher.y - orbRadius(1) * 0.2, vx, vy);
+  } else {
+    makeOrb(currentTier, launcher.x, launcher.y - orbRadius(currentTier) * 0.2, vx, vy);
+  }
   playFire();
   currentTier = nextTier;
+  currentMystery = nextMystery;
   nextTier = randSpawnTier();
-  nextEl.textContent = TIERS[nextTier].emoji;
+  nextMystery = Math.random() < MYSTERY_CHANCE;
+  updateNextChip();
   return true;
 }
 
@@ -516,7 +602,7 @@ function previewPath(tx, ty) {
   const dx = tx - launcher.x, dy = ty - launcher.y;
   const d = Math.hypot(dx, dy);
   if (d < 15) return [];
-  const r = armed ? orbRadius(1) : orbRadius(currentTier);
+  const r = (armed || currentMystery) ? orbRadius(1) : orbRadius(currentTier);
   let px = launcher.x, py = launcher.y - r * 0.2;
   let vx = dx / d * LAUNCH_SPEED, vy = dy / d * LAUNCH_SPEED;
   const pts = [];
@@ -555,14 +641,14 @@ function checkLose(now) {
     if (now - o.bornAt < NEW_ORB_GRACE) continue;
     const d = Math.hypot(o.position.x - C.x, o.position.y - C.y);
     const speed = Math.hypot(o.velocity.x, o.velocity.y);
-    const outside = d + o.orbR > dangerR;
+    const outside = d + o.orbR > ringR;
     if (outside && speed < SETTLED_SPEED) {
       danger = true;
       if (!o.overSince) o.overSince = now;
       else if (now - o.overSince > LOSE_GRACE) return gameOver();
     } else {
       o.overSince = null;
-      if (!outside && d + o.orbR > dangerR - 30) danger = true;
+      if (!outside && d + o.orbR > ringR - 30) danger = true;
     }
   }
   warning = danger;
@@ -570,22 +656,33 @@ function checkLose(now) {
 
 function levelClear() {
   state = 'clear';
+  ringFlashUntil = performance.now() + 1500;
+  splash('LEVEL CLEAR!');
+  shake(7);
+  setMood('wow', 3500);
+  playLevelClear();
+  for (let i = 0; i < 6; i++) { // fireworks around the cluster
+    const a = (i / 6) * Math.PI * 2;
+    burst(C.x + Math.cos(a) * ringR * 0.6, C.y + Math.sin(a) * ringR * 0.6,
+      i % 2 ? '#ffd166' : '#c77dff', 22);
+  }
   const bonus = 20 * level;
   score += bonus;
   scoreEl.textContent = score;
-  playLevelClear();
-  setMood('wow', 3500);
   earnSpecial('smash');
   if (score > best) {
     best = score;
     localStorage.setItem('om-best', best);
   }
   bestEl.textContent = 'BEST ' + best;
-  overTitleEl.textContent = 'Level ' + level + ' Clear! 🎉';
-  finalEl.textContent = score;
-  bestNoteEl.textContent = '+' + bonus + ' level bonus';
-  againEl.textContent = 'Next Level';
-  overEl.classList.remove('hidden');
+  setTimeout(() => {
+    if (state !== 'clear') return; // board was reset while celebrating
+    overTitleEl.textContent = 'Level ' + level + ' Clear! 🎉';
+    finalEl.textContent = score;
+    bestNoteEl.textContent = '+' + bonus + ' level bonus';
+    againEl.textContent = 'Next Level';
+    overEl.classList.remove('hidden');
+  }, 1400);
 }
 
 function gameOver() {
@@ -622,6 +719,8 @@ function resetBoard() {
   comboLastAt = -1e9;
   cfg = levelConfig(level);
   layout();
+  ringR = ringTarget = dangerR * 0.80;
+  ringGrowAt = -1e9;
   buildPlanets();
   const n = cfg.debris;
   const cycle = cfg.debrisMaxTier + 1;
@@ -639,7 +738,7 @@ function resetBoard() {
   updateLevelHud();
   updatePw();
   overEl.classList.add('hidden');
-  splash('LEVEL ' + level + (cfg.label ? ' · ' + cfg.label : ''));
+  splash('LEVEL ' + level + (cfg.label ? ' · ' + cfg.label : '') + (cfg.collapse ? ' · SKY COLLAPSE!' : ''));
 }
 
 againEl.addEventListener('click', () => {
@@ -740,28 +839,34 @@ function drawOrb(x, y, angle, tier, r, scale) {
   ctx.restore();
 }
 
+const SPECIAL_LOOKS = {
+  wild:    { glow: '255, 255, 255', fill: 'rgba(255,255,255,.22)', glyph: '🌈' },
+  smash:   { glow: '255, 107, 107', fill: 'rgba(255,107,107,.22)', glyph: '💥' },
+  mystery: { glow: '199, 125, 255', fill: 'rgba(199,125,255,.25)', glyph: '❓' },
+};
+
 function drawSpecialOrb(x, y, kind, r, now) {
+  const look = SPECIAL_LOOKS[kind];
   ctx.save();
   ctx.translate(x, y);
-  const glowColor = kind === 'wild' ? '255, 255, 255' : '255, 107, 107';
   const glow = ctx.createRadialGradient(0, 0, r * 0.2, 0, 0, r * 1.5);
-  glow.addColorStop(0, `rgba(${glowColor}, .4)`);
-  glow.addColorStop(1, `rgba(${glowColor}, 0)`);
+  glow.addColorStop(0, `rgba(${look.glow}, .4)`);
+  glow.addColorStop(1, `rgba(${look.glow}, 0)`);
   ctx.beginPath();
   ctx.arc(0, 0, r * 1.5, 0, Math.PI * 2);
   ctx.fillStyle = glow;
   ctx.fill();
   ctx.beginPath();
   ctx.arc(0, 0, r, 0, Math.PI * 2);
-  ctx.fillStyle = kind === 'wild' ? 'rgba(255,255,255,.22)' : 'rgba(255,107,107,.22)';
+  ctx.fillStyle = look.fill;
   ctx.fill();
-  ctx.strokeStyle = kind === 'wild' ? `hsl(${(now / 6) % 360} 85% 70%)` : '#ff6b6b';
+  ctx.strokeStyle = kind === 'smash' ? '#ff6b6b' : `hsl(${(now / 6) % 360} 85% 70%)`;
   ctx.lineWidth = Math.max(2, r * 0.12);
   ctx.stroke();
   ctx.font = `${Math.round(r * 1.1)}px sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(kind === 'wild' ? '🌈' : '💥', 0, r * 0.05);
+  ctx.fillText(look.glyph, 0, r * 0.05);
   ctx.restore();
 }
 
@@ -890,15 +995,27 @@ function render(now) {
   }
   ctx.globalAlpha = 1;
 
-  // danger ring
+  // danger ring (dynamic radius; gold during celebration)
   const flash = warning && state === 'playing' && Math.floor(now / 250) % 2 === 0;
   ctx.setLineDash([10, 12]);
-  ctx.strokeStyle = flash ? 'rgba(255, 90, 110, .95)' : (warning ? 'rgba(255, 90, 110, .55)' : 'rgba(178, 152, 220, .4)');
-  ctx.lineWidth = flash ? 3 : 2;
+  ctx.strokeStyle = now < ringFlashUntil ? 'rgba(255, 209, 102, .95)'
+    : flash ? 'rgba(255, 90, 110, .95)'
+    : (warning ? 'rgba(255, 90, 110, .55)' : 'rgba(178, 152, 220, .4)');
+  ctx.lineWidth = flash || now < ringFlashUntil ? 3 : 2;
   ctx.beginPath();
-  ctx.arc(C.x, C.y, dangerR, 0, Math.PI * 2);
+  ctx.arc(C.x, C.y, ringR, 0, Math.PI * 2);
   ctx.stroke();
   ctx.setLineDash([]);
+  const gt = (now - ringGrowAt) / 500;
+  if (gt >= 0 && gt < 1) { // growth ripple
+    ctx.globalAlpha = 1 - gt;
+    ctx.strokeStyle = 'rgba(255, 209, 102, .8)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(C.x, C.y, ringR + gt * 18, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
 
   const mood = currentMood(now);
   for (const p of planets) drawPlanet(p, now, mood);
@@ -947,8 +1064,8 @@ function render(now) {
   ctx.stroke();
   ctx.restore();
   if (state === 'playing' && performance.now() >= nextReadyAt) {
-    if (armed) {
-      drawSpecialOrb(launcher.x, launcher.y - orbRadius(1) * 0.2, armed, orbRadius(1), now);
+    if (armed || currentMystery) {
+      drawSpecialOrb(launcher.x, launcher.y - orbRadius(1) * 0.2, armed || 'mystery', orbRadius(1), now);
     } else {
       drawOrb(launcher.x, launcher.y - orbRadius(currentTier) * 0.2, 0, currentTier, orbRadius(currentTier), 1);
     }
@@ -987,7 +1104,7 @@ function render(now) {
     if (t >= 1) { splashes.splice(i, 1); continue; }
     const sc = Math.min(1, t * 4);
     ctx.save();
-    ctx.translate(C.x, C.y - dangerR - 36);
+    ctx.translate(C.x, C.y - dangerR - 36 - i * 30);
     ctx.scale(sc, sc);
     ctx.globalAlpha = t < 0.7 ? 1 : 1 - (t - 0.7) / 0.3;
     ctx.font = '800 24px -apple-system, sans-serif';
@@ -1067,6 +1184,9 @@ window.__dbg = {
   planets: () => planets.map(p => ({ x: Math.round(p.body.position.x), y: Math.round(p.body.position.y), r: Math.round(p.r), main: p.main })),
   moon: () => moon ? { x: Math.round(moon.position.x), y: Math.round(moon.position.y) } : null,
   config: () => cfg,
+  ring: () => ({ r: Math.round(ringR), target: Math.round(ringTarget), cap: Math.round(dangerR) }),
+  forceMystery(v) { forcedMystery = v; },
+  armMystery() { currentMystery = true; },
   score: () => score,
   state: () => state,
   level: () => level,
