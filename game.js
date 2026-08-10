@@ -733,6 +733,8 @@ function gameOver() {
   bestEl.textContent = 'BEST ' + best;
   againEl.textContent = 'Try Again';
   overEl.classList.remove('hidden');
+  // no-op on the web; the native store build's ad layer listens for this
+  document.dispatchEvent(new CustomEvent('neb:gameover', { detail: { score, level } }));
 }
 
 // Rebuild the board for the current level: world modifiers, planet(s), and a
@@ -1227,6 +1229,7 @@ window.__dbg = {
   forceMystery(v) { forcedMystery = v; },
   armMystery() { currentMystery = true; },
   resetTips() { seenTips.clear(); localStorage.removeItem('om-tips'); },
+  grant: earnSpecial,
   tipVisible: () => !tipEl.classList.contains('hidden') ? tipTextEl.textContent : null,
   score: () => score,
   state: () => state,

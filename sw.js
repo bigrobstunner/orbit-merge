@@ -1,4 +1,4 @@
-const CACHE = 'orbit-merge-v11';
+const CACHE = 'orbit-merge-v12';
 const ASSETS = [
   './',
   './index.html',
