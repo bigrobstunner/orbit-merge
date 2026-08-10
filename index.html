@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Orbit Merge</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Orbit Merge">
+<meta name="theme-color" content="#0b0d2a">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="icon" href="icons/icon-180.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="hud">
+  <div class="hud-left">
+    <div id="score">0</div>
+    <div id="best">BEST 0</div>
+  </div>
+  <div class="hud-right">
+    <div id="nextWrap"><span class="nextLabel">NEXT</span><span id="next">✨</span></div>
+    <button id="mute" aria-label="Toggle sound">🔊</button>
+  </div>
+</div>
+<div id="chain"></div>
+<div id="over" class="hidden">
+  <div class="panel">
+    <h1 id="overTitle">Game Over</h1>
+    <div id="finalScore">0</div>
+    <div id="bestNote"></div>
+    <button id="again">Play Again</button>
+    <div class="love">Made with ❤️ by Rob</div>
+  </div>
+</div>
+<script src="matter.min.js"></script>
+<script src="game.js"></script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+{
+  "name": "Orbit Merge",
+  "short_name": "Orbit Merge",
+  "description": "Fire orbs at a tiny planet, curve them with gravity, and merge your way from stardust to a galaxy. Ad-free, made with love.",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0b0d2a",
+  "theme_color": "#0b0d2a",
+  "icons": [
+    { "src": "icons/icon-180.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
