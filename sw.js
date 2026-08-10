@@ -1,4 +1,4 @@
-const CACHE = 'orbit-merge-v2';
+const CACHE = 'orbit-merge-v3';
 const ASSETS = [
   './',
   './index.html',
@@ -11,7 +11,13 @@ const ASSETS = [
 ];
 
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));
+  // cache: 'reload' bypasses the browser's HTTP cache (GitHub Pages sets a
+  // 10-minute max-age) so a new SW version always installs fresh files.
+  e.waitUntil(
+    caches.open(CACHE)
+      .then(c => c.addAll(ASSETS.map(u => new Request(u, { cache: 'reload' }))))
+      .then(() => self.skipWaiting())
+  );
 });
 
 self.addEventListener('activate', e => {
@@ -28,7 +34,7 @@ self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET' || !e.request.url.startsWith(self.location.origin)) return;
   e.respondWith(
     caches.match(e.request).then(cached => {
-      const fresh = fetch(e.request)
+      const fresh = fetch(e.request, { cache: 'no-cache' })
         .then(res => {
           if (res.ok) {
             const copy = res.clone();
