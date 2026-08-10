@@ -170,6 +170,27 @@ html, body {
   text-shadow: 0 0 8px #ffd166, 0 0 14px #ffd166;
 }
 
+#tip {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 132px);
+  max-width: 300px;
+  background: rgba(23, 26, 69, .95);
+  border: 2px solid #ffd166;
+  border-radius: 14px;
+  padding: 10px 14px;
+  color: #f2ecff;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.45;
+  z-index: 5;
+  box-shadow: 0 0 20px rgba(255, 209, 102, .25);
+  cursor: pointer;
+}
+
+#tip.hidden { display: none; }
+
 #ver {
   position: fixed;
   right: 8px;

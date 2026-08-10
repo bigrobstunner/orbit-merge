@@ -275,6 +275,7 @@ function rollQueue() {
 
 function updateNextChip() {
   nextEl.textContent = nextMystery ? '❓' : TIERS[nextTier].emoji;
+  if (nextMystery) tip('mystery', 'A Mystery Orb ❓ is coming. Nobody knows what it does until it touches something...');
 }
 
 function ringGrow(amt) {
@@ -324,6 +325,33 @@ function updateLevelHud() {
   });
 }
 
+// ---- First-time tips ----------------------------------------------------
+// Each tip shows once ever, right when its mechanic first appears.
+let seenTips = new Set();
+try { seenTips = new Set(JSON.parse(localStorage.getItem('om-tips') || '[]')); } catch (e) { /* fresh */ }
+const tipQueue = [];
+let tipTimer = null;
+const tipEl = $('tip'), tipTextEl = $('tipText');
+
+function tip(id, text) {
+  if (seenTips.has(id)) return;
+  seenTips.add(id);
+  localStorage.setItem('om-tips', JSON.stringify([...seenTips]));
+  tipQueue.push(text);
+  if (tipEl.classList.contains('hidden')) showNextTip();
+}
+
+function showNextTip() {
+  clearTimeout(tipTimer);
+  const text = tipQueue.shift();
+  if (!text) { tipEl.classList.add('hidden'); return; }
+  tipTextEl.textContent = text;
+  tipEl.classList.remove('hidden');
+  tipTimer = setTimeout(showNextTip, 8000);
+}
+
+tipEl.addEventListener('click', showNextTip);
+
 // ---- Specials inventory -------------------------------------------------
 function saveInv() { localStorage.setItem('om-inv', JSON.stringify(inv)); }
 
@@ -342,6 +370,8 @@ function earnSpecial(kind) {
   saveInv();
   updatePw();
   splash(kind === 'wild' ? '🌈 WILD ORB EARNED' : '💥 SMASHER EARNED');
+  if (kind === 'wild') tip('wild', 'You earned a Wild Orb 🌈. Tap it next to the launcher, then fire. It merges with whatever it touches.');
+  else tip('smash', 'You earned a Smasher 💥. Tap it next to the launcher, then fire. It destroys whatever it hits.');
 }
 
 for (const kind of ['wild', 'smash']) {
@@ -356,6 +386,7 @@ for (const kind of ['wild', 'smash']) {
 function bumpCombo() {
   comboCount = (simTime - comboLastAt <= COMBO_WINDOW) ? comboCount + 1 : 1;
   comboLastAt = simTime;
+  if (comboCount === 2) tip('combo', 'Combo! Merges within 2 seconds of each other multiply your score. Chain them for wild rewards.');
   if (comboCount === 4) earnSpecial('wild');
   if (comboCount === 6) earnSpecial('smash');
   if (comboCount >= 3) {
@@ -430,6 +461,7 @@ function completeMerge(tier, mx, my) {
   }
   burst(mx, my, TIERS[tier].color, tier === MAX_TIER ? 70 : 14 + tier * 3);
   ringGrow(2 + tier * 1.1);
+  tip('ring', 'See the gold ripple? Every merge pushes the ring outward. Bigger merges push harder.');
   const combo = bumpCombo();
   addScore(TIERS[tier].pts * combo, mx, my, combo);
   playMerge(tier, combo);
@@ -651,6 +683,7 @@ function checkLose(now) {
       if (!outside && d + o.orbR > ringR - 30) danger = true;
     }
   }
+  if (danger) tip('danger', 'Careful! An orb resting outside the ring for too long ends the run.');
   warning = danger;
 }
 
@@ -739,6 +772,8 @@ function resetBoard() {
   updatePw();
   overEl.classList.add('hidden');
   splash('LEVEL ' + level + (cfg.label ? ' · ' + cfg.label : '') + (cfg.collapse ? ' · SKY COLLAPSE!' : ''));
+  if (cfg.label) tip('world', 'New world! The physics change every 10 levels. The label under your score says what you are flying in.');
+  if (cfg.collapse) tip('collapse', 'SKY COLLAPSE! The ring is shrinking on this boss level. Merging pushes it back out.');
 }
 
 againEl.addEventListener('click', () => {
@@ -1151,13 +1186,17 @@ function boot() {
   });
   bestEl.textContent = 'BEST ' + best;
   resetBoard();
+  const AIM_TIP = 'Touch and drag to aim. The gold dots show how your shot will curve. Release to fire.';
   if (!localStorage.getItem('om-welcomed')) {
     $('welcome').classList.remove('hidden');
+  } else {
+    tip('aim', AIM_TIP);
   }
   $('begin').addEventListener('click', () => {
     localStorage.setItem('om-welcomed', '1');
     $('welcome').classList.add('hidden');
     unlockAudio();
+    tip('aim', AIM_TIP);
   });
   requestAnimationFrame(loop);
 }
@@ -1187,6 +1226,8 @@ window.__dbg = {
   ring: () => ({ r: Math.round(ringR), target: Math.round(ringTarget), cap: Math.round(dangerR) }),
   forceMystery(v) { forcedMystery = v; },
   armMystery() { currentMystery = true; },
+  resetTips() { seenTips.clear(); localStorage.removeItem('om-tips'); },
+  tipVisible: () => !tipEl.classList.contains('hidden') ? tipTextEl.textContent : null,
   score: () => score,
   state: () => state,
   level: () => level,
