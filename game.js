@@ -6,11 +6,11 @@ const { Engine, Bodies, Body, Composite, Events } = Matter;
 // r = radius as a fraction of the danger-ring radius. pts = score when two
 // of this tier merge. Re-theme the whole game by editing this list.
 const TIERS = [
-  { emoji: '✨', color: '#ffe08a', r: 0.100, pts: 1 },
+  { emoji: '✨', color: '#9be7ff', r: 0.100, pts: 1 },
   { emoji: '⭐', color: '#ffd166', r: 0.125, pts: 3 },
-  { emoji: '🌟', color: '#ffb703', r: 0.155, pts: 6 },
-  { emoji: '💫', color: '#c77dff', r: 0.190, pts: 10 },
-  { emoji: '☄️', color: '#90e0ef', r: 0.230, pts: 15 },
+  { emoji: '💫', color: '#c77dff', r: 0.155, pts: 6 },
+  { emoji: '🌟', color: '#ff9f43', r: 0.190, pts: 10 },
+  { emoji: '☄️', color: '#63e6be', r: 0.230, pts: 15 },
   { emoji: '🌑', color: '#adb5bd', r: 0.272, pts: 21 },
   { emoji: '🌕', color: '#ffe066', r: 0.318, pts: 28 },
   { emoji: '🌍', color: '#48cae4', r: 0.368, pts: 36 },
@@ -25,8 +25,8 @@ const LOSE_GRACE = 1400;      // ms a settled orb may sit beyond the ring
 const NEW_ORB_GRACE = 1500;   // ms before a fresh shot can trigger loss
 const SETTLED_SPEED = 1.6;    // orbs faster than this are still in flight
 const G = 0.15;               // radial gravity, px per step^2
-const DAMP = 0.992;           // per-step velocity damping (decays orbits)
-const LAUNCH_SPEED = 13;      // px per step
+const DAMP = 0.9895;          // per-step velocity damping (decays orbits)
+const LAUNCH_SPEED = 14.5;    // px per step
 const STEP = 1000 / 60;
 const COMBO_WINDOW = 1800;    // sim-ms between merges that keeps a combo alive
 const INV_CAP = 3;            // max held of each special
@@ -639,7 +639,7 @@ function previewPath(tx, ty) {
   let vx = dx / d * LAUNCH_SPEED, vy = dy / d * LAUNCH_SPEED;
   const pts = [];
   const os = orbs();
-  for (let i = 0; i < 130; i++) {
+  for (let i = 0; i < 200; i++) {
     const a = gravityAccel(px, py);
     vx = (vx + a.x) * DAMP;
     vy = (vy + a.y) * DAMP;
@@ -858,14 +858,14 @@ function drawOrb(x, y, angle, tier, r, scale) {
   ctx.fill();
   const grad = ctx.createRadialGradient(-r * 0.3, -r * 0.3, r * 0.1, 0, 0, r);
   grad.addColorStop(0, '#ffffff33');
-  grad.addColorStop(0.4, c.color + '38');
-  grad.addColorStop(1, c.color + '30');
+  grad.addColorStop(0.4, c.color + '55');
+  grad.addColorStop(1, c.color + '45');
   ctx.beginPath();
   ctx.arc(0, 0, r, 0, Math.PI * 2);
   ctx.fillStyle = grad;
   ctx.fill();
-  ctx.strokeStyle = c.color + '88';
-  ctx.lineWidth = Math.max(1.5, r * 0.06);
+  ctx.strokeStyle = c.color + 'cc';
+  ctx.lineWidth = Math.max(2.5, r * 0.08);
   ctx.stroke();
   ctx.font = `${Math.round(r * 1.2)}px sans-serif`;
   ctx.textAlign = 'center';
