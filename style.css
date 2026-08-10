@@ -118,7 +118,7 @@ html, body {
   text-shadow: 0 0 8px #ffd166, 0 0 14px #ffd166;
 }
 
-#over {
+#over, #welcome {
   position: fixed;
   inset: 0;
   background: rgba(4, 5, 20, .6);
@@ -128,9 +128,51 @@ html, body {
   z-index: 10;
 }
 
-#over.hidden { display: none; }
+#over.hidden, #welcome.hidden { display: none; }
 
-#over .panel {
+#welcome { background: rgba(4, 5, 20, .75); z-index: 11; }
+
+.wtitle {
+  font-size: 34px;
+  font-weight: 800;
+  background: linear-gradient(120deg, #c77dff, #ffd166);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  margin-bottom: 8px;
+}
+
+.wsub {
+  font-size: 15px;
+  font-weight: 700;
+  color: #f2ecff;
+  margin-bottom: 14px;
+}
+
+.whow {
+  font-size: 13px;
+  color: #8f86b8;
+  line-height: 1.5;
+  margin-bottom: 20px;
+}
+
+#begin {
+  background: #7b5cd6;
+  border: none;
+  border-radius: 16px;
+  color: #fff;
+  font-size: 18px;
+  font-weight: 800;
+  padding: 12px 34px;
+  cursor: pointer;
+  box-shadow: 0 4px 0 #5a3fb0;
+}
+
+#begin:active { transform: translateY(2px); box-shadow: 0 2px 0 #5a3fb0; }
+
+#welcome .panel { max-width: 78vw; }
+
+#over .panel, #welcome .panel {
   background: #171a45;
   border: 2px solid rgba(178,152,220,.6);
   border-radius: 24px;

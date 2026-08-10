@@ -498,6 +498,23 @@ function drawPlanet(now) {
   ctx.beginPath();
   ctx.arc(0, e * 0.9, e * 0.5, 0.1 * Math.PI, 0.9 * Math.PI);
   ctx.stroke();
+  // Lisa's crown
+  ctx.save();
+  ctx.rotate(-0.3);
+  ctx.translate(0, -planetR * 1.04);
+  const cw = planetR * 0.56, ch = planetR * 0.36;
+  ctx.fillStyle = '#ffd166';
+  ctx.beginPath();
+  ctx.moveTo(-cw / 2, 0);
+  ctx.lineTo(-cw / 2, -ch * 0.55);
+  ctx.lineTo(-cw / 6, -ch * 0.25);
+  ctx.lineTo(0, -ch);
+  ctx.lineTo(cw / 6, -ch * 0.25);
+  ctx.lineTo(cw / 2, -ch * 0.55);
+  ctx.lineTo(cw / 2, 0);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
   ctx.restore();
 }
 
@@ -629,6 +646,14 @@ function boot() {
   });
   bestEl.textContent = 'BEST ' + best;
   resetBoard();
+  if (!localStorage.getItem('om-welcomed')) {
+    $('welcome').classList.remove('hidden');
+  }
+  $('begin').addEventListener('click', () => {
+    localStorage.setItem('om-welcomed', '1');
+    $('welcome').classList.add('hidden');
+    unlockAudio();
+  });
   requestAnimationFrame(loop);
 }
 
