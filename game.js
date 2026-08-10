@@ -28,15 +28,50 @@ const G = 0.15;               // radial gravity, px per step^2
 const DAMP = 0.992;           // per-step velocity damping (decays orbits)
 const LAUNCH_SPEED = 13;      // px per step
 const STEP = 1000 / 60;
+const COMBO_WINDOW = 1800;    // sim-ms between merges that keeps a combo alive
+const INV_CAP = 3;            // max held of each special
+
+// ---- Worlds: one theme per decade of levels -----------------------------
+const WORLDS = [
+  { key: 'calm',       label: '' },
+  { key: 'heavy',      label: 'HEAVY WORLD' },
+  { key: 'light',      label: 'LIGHT WORLD' },
+  { key: 'drift',      label: 'DRIFTING WORLD' },
+  { key: 'moon',       label: 'MOON WORLD' },
+  { key: 'binary',     label: 'BINARY WORLD' },
+  { key: 'heavymoon',  label: 'HEAVY MOON' },
+  { key: 'driftlight', label: 'LIGHT DRIFT' },
+  { key: 'binarymoon', label: 'BINARY MOON' },
+  { key: 'gauntlet',   label: 'THE GAUNTLET' },
+];
+
+function levelConfig(lv) {
+  const p = (lv - 1) % 10;
+  const dec = Math.min(Math.floor((lv - 1) / 10), 9);
+  const k = WORLDS[dec].key;
+  return {
+    goalTier: Math.min(4 + Math.floor(p / 3) + (p === 9 ? 1 : 0) + (dec >= 6 ? 1 : 0), 9),
+    debris: Math.min(2 + Math.floor(lv / 2), 12),
+    debrisMaxTier: Math.min(2 + Math.floor(dec / 2), 4),
+    planetScale: 1 + Math.min(0.30, dec * 0.04 + p * 0.008),
+    gMul: k.includes('heavy') ? 1.3 : (k.includes('light') ? 0.75 : 1),
+    drift: k.includes('drift') || k === 'gauntlet',
+    moon: k.includes('moon'),
+    binary: k.includes('binary') || k === 'gauntlet',
+    label: WORLDS[dec].label,
+  };
+}
 
 // ---- Canvas / layout ----------------------------------------------------
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 let W = 0, H = 0, dpr = 1;
-let C = { x: 0, y: 0 };       // planet center
+let C = { x: 0, y: 0 };       // ring center
 let dangerR = 0, planetR = 0;
 let launcher = { x: 0, y: 0 };
 let stars = [];
+let level = Math.max(1, +(localStorage.getItem('om-level') || 1));
+let cfg = levelConfig(level);
 
 function layout() {
   dpr = Math.min(window.devicePixelRatio || 1, 3);
@@ -48,8 +83,7 @@ function layout() {
 
   C = { x: W / 2, y: H * 0.40 };
   dangerR = Math.min(W / 2 - 44, H * 0.27);
-  // the planet swells with each level, leaving less room to work with
-  planetR = Math.max(28, dangerR * 0.21) * (1 + 0.04 * Math.min(level - 1, 12));
+  planetR = Math.max(28, dangerR * 0.21) * cfg.planetScale;
   launcher = { x: W / 2, y: H - Math.max(96, H * 0.115) };
 
   stars = [];
@@ -68,12 +102,58 @@ function layout() {
 const engine = Engine.create();
 engine.gravity.y = 0; // gravity is ours: radial, applied per step
 const world = engine.world;
-let planetBody = null;
+let planets = [];   // [{ body, r, main }]
+let moon = null;
+let simTime = 0;    // deterministic clock advanced per physics step
 
-function buildPlanet() {
-  if (planetBody) Composite.remove(world, planetBody);
-  planetBody = Bodies.circle(C.x, C.y, planetR, { isStatic: true, label: 'planet' });
-  Composite.add(world, planetBody);
+const PLANET_SKINS = [
+  { top: '#b8a4f0', bottom: '#6c4fc4', glow: '123, 92, 214' },
+  { top: '#9fe3f0', bottom: '#3d9dbf', glow: '80, 180, 220' },
+];
+
+function buildPlanets() {
+  planets.forEach(p => Composite.remove(world, p.body));
+  if (moon) { Composite.remove(world, moon); moon = null; }
+  planets = [];
+  if (cfg.binary) {
+    const r = planetR * 0.72;
+    for (let i = 0; i < 2; i++) {
+      const b = Bodies.circle(C.x, C.y, r, { isStatic: true, label: 'planet' });
+      planets.push({ body: b, r, main: i === 0 });
+      Composite.add(world, b);
+    }
+  } else {
+    const b = Bodies.circle(C.x, C.y, planetR, { isStatic: true, label: 'planet' });
+    planets.push({ body: b, r: planetR, main: true });
+    Composite.add(world, b);
+  }
+  if (cfg.moon) {
+    moon = Bodies.circle(C.x, C.y - dangerR * 0.74, planetR * 0.38, { isStatic: true, label: 'moon' });
+    Composite.add(world, moon);
+  }
+  positionCelestials();
+}
+
+// Moving bodies (drift, binary orbit, moon) run off simTime so the physics
+// stays deterministic under __dbg.step and pauses cleanly with the game.
+function positionCelestials() {
+  if (cfg.binary) {
+    const a = simTime * 0.00012;
+    const off = dangerR * 0.34;
+    const dx = Math.cos(a) * off, dy = Math.sin(a) * off;
+    Body.setPosition(planets[0].body, { x: C.x + dx, y: C.y + dy });
+    Body.setPosition(planets[1].body, { x: C.x - dx, y: C.y - dy });
+  } else if (planets.length) {
+    const dx = cfg.drift ? Math.sin(simTime * 0.00025) * dangerR * 0.22 : 0;
+    Body.setPosition(planets[0].body, { x: C.x + dx, y: C.y });
+  }
+  if (moon) {
+    const a = simTime * 0.0004;
+    Body.setPosition(moon, {
+      x: C.x + Math.cos(a) * dangerR * 0.74,
+      y: C.y + Math.sin(a) * dangerR * 0.74,
+    });
+  }
 }
 
 function orbRadius(tier) { return TIERS[tier].r * dangerR; }
@@ -95,54 +175,79 @@ function makeOrb(tier, x, y, vx, vy) {
   return body;
 }
 
+function makeSpecial(kind, x, y, vx, vy) {
+  const b = makeOrb(1, x, y, vx, vy);
+  b.tier = -1;
+  b.special = kind; // 'wild' | 'smash'
+  return b;
+}
+
 function orbs() {
   return Composite.allBodies(world).filter(b => b.label === 'orb');
 }
 
-// The one non-standard piece: constant-magnitude gravity toward the planet,
-// applied by hand each step so the trajectory preview can run the exact
-// same math. Damping makes stray orbits decay onto the cluster.
+function gravityAccel(px, py) {
+  let ax = 0, ay = 0;
+  for (const p of planets) {
+    const dx = p.body.position.x - px, dy = p.body.position.y - py;
+    const d = Math.hypot(dx, dy) || 1;
+    ax += dx / d;
+    ay += dy / d;
+  }
+  const g = G * cfg.gMul / planets.length;
+  return { x: ax * g, y: ay * g };
+}
+
 function applyGravity() {
   for (const b of orbs()) {
-    const dx = C.x - b.position.x, dy = C.y - b.position.y;
-    const d = Math.hypot(dx, dy) || 1;
+    const a = gravityAccel(b.position.x, b.position.y);
     Body.setVelocity(b, {
-      x: (b.velocity.x + G * dx / d) * DAMP,
-      y: (b.velocity.y + G * dy / d) * DAMP,
+      x: (b.velocity.x + a.x) * DAMP,
+      y: (b.velocity.y + a.y) * DAMP,
     });
   }
+}
+
+function tickPhysics() {
+  simTime += STEP;
+  positionCelestials();
+  applyGravity();
+  Engine.update(engine, STEP);
 }
 
 // ---- Game state ---------------------------------------------------------
 let score = 0;
 let best = +(localStorage.getItem('om-best') || 0);
-let level = Math.max(1, +(localStorage.getItem('om-level') || 1));
-let goalTier = 4;
 let state = 'playing'; // 'playing' | 'clear' | 'over'
 let nextReadyAt = 0;
 let currentTier = 0, nextTier = 0;
 let discovered = new Set([0]);
+let settling = false; // silent merges while debris settles at level start
 const pendingMerges = [];
+const pendingSpecials = [];
 const particles = [];
 const popups = [];
+const splashes = [];
 let frame = 0;
 let warning = false;
+let comboCount = 0, comboLastAt = -1e9;
+let shakeUntil = 0, shakeAmp = 0;
+let moodType = 'sleep', moodUntil = 0;
+const MOOD_PRIORITY = { sleep: 0, worry: 1, happy: 2, wow: 3 };
+
+let inv = { wild: 0, smash: 0 };
+try {
+  const saved = JSON.parse(localStorage.getItem('om-inv') || '{}');
+  inv.wild = Math.min(INV_CAP, saved.wild | 0);
+  inv.smash = Math.min(INV_CAP, saved.smash | 0);
+} catch (e) { /* fresh inventory */ }
+let armed = null;
 
 const $ = id => document.getElementById(id);
 const scoreEl = $('score'), bestEl = $('best'), nextEl = $('next');
 const overEl = $('over'), finalEl = $('finalScore'), bestNoteEl = $('bestNote');
-const lvlEl = $('lvl'), overTitleEl = $('overTitle'), againEl = $('again');
-
-function computeGoal() {
-  goalTier = Math.min(4 + Math.floor((level - 1) / 2), MAX_TIER);
-}
-
-function updateLevelHud() {
-  lvlEl.textContent = 'LVL ' + level + ' · GOAL ' + TIERS[goalTier].emoji;
-  document.querySelectorAll('#chain span').forEach((s, i) => {
-    s.classList.toggle('goal', i === goalTier);
-  });
-}
+const lvlEl = $('lvl'), worldEl = $('world'), overTitleEl = $('overTitle'), againEl = $('again');
+const pwEls = { wild: $('pwWild'), smash: $('pwSmash') };
 
 function randSpawnTier() { return Math.floor(Math.random() * (SPAWN_MAX_TIER + 1)); }
 
@@ -152,10 +257,31 @@ function rollQueue() {
   nextEl.textContent = TIERS[nextTier].emoji;
 }
 
-function addScore(pts, x, y) {
+function addScore(pts, x, y, combo) {
   score += pts;
   scoreEl.textContent = score;
-  popups.push({ x, y, txt: '+' + pts, t0: performance.now() });
+  popups.push({ x, y, txt: '+' + pts + (combo > 1 ? ' x' + combo : ''), t0: performance.now() });
+}
+
+function splash(txt) {
+  splashes.push({ txt, t0: performance.now() });
+}
+
+function shake(amp) {
+  shakeAmp = Math.min(10, amp);
+  shakeUntil = performance.now() + 280;
+}
+
+function setMood(t, ms) {
+  const now = performance.now();
+  if (moodUntil > now && MOOD_PRIORITY[t] < MOOD_PRIORITY[moodType]) return;
+  moodType = t;
+  moodUntil = now + ms;
+}
+
+function currentMood(now) {
+  if (moodUntil > now) return moodType;
+  return warning ? 'worry' : 'sleep';
 }
 
 function markDiscovered(tier) {
@@ -165,7 +291,56 @@ function markDiscovered(tier) {
   if (el) el.classList.add('found');
 }
 
-// ---- Merging ------------------------------------------------------------
+function updateLevelHud() {
+  lvlEl.textContent = 'LVL ' + level + ' · GOAL ' + TIERS[cfg.goalTier].emoji;
+  worldEl.textContent = cfg.label;
+  document.querySelectorAll('#chain span').forEach((s, i) => {
+    s.classList.toggle('goal', i === cfg.goalTier);
+  });
+}
+
+// ---- Specials inventory -------------------------------------------------
+function saveInv() { localStorage.setItem('om-inv', JSON.stringify(inv)); }
+
+function updatePw() {
+  for (const kind of ['wild', 'smash']) {
+    const el = pwEls[kind];
+    el.querySelector('b').textContent = inv[kind];
+    el.classList.toggle('empty', inv[kind] === 0);
+    el.classList.toggle('armed', armed === kind);
+  }
+}
+
+function earnSpecial(kind) {
+  if (inv[kind] >= INV_CAP) return;
+  inv[kind]++;
+  saveInv();
+  updatePw();
+  splash(kind === 'wild' ? '🌈 WILD ORB EARNED' : '💥 SMASHER EARNED');
+}
+
+for (const kind of ['wild', 'smash']) {
+  pwEls[kind].addEventListener('click', () => {
+    if (state !== 'playing' || !inv[kind]) return;
+    armed = armed === kind ? null : kind;
+    updatePw();
+  });
+}
+
+// ---- Combos & merging ---------------------------------------------------
+function bumpCombo() {
+  comboCount = (simTime - comboLastAt <= COMBO_WINDOW) ? comboCount + 1 : 1;
+  comboLastAt = simTime;
+  if (comboCount === 4) earnSpecial('wild');
+  if (comboCount === 6) earnSpecial('smash');
+  if (comboCount >= 3) {
+    splash('COMBO x' + comboCount);
+    shake(3 + comboCount);
+    setMood('happy', 1600);
+  }
+  return comboCount;
+}
+
 function queueMerge(a, b) {
   if (a.dead || b.dead || a.tier !== b.tier) return;
   a.dead = b.dead = true;
@@ -174,6 +349,19 @@ function queueMerge(a, b) {
 
 Events.on(engine, 'collisionStart', ev => {
   for (const { bodyA, bodyB } of ev.pairs) {
+    const s = bodyA.special ? bodyA : (bodyB.special ? bodyB : null);
+    if (s) {
+      const other = s === bodyA ? bodyB : bodyA;
+      if (other.special || s.dead || other.dead) continue;
+      if (other.label === 'orb') {
+        s.dead = other.dead = true;
+        pendingSpecials.push([s, other]);
+      } else {
+        s.dead = true;
+        pendingSpecials.push([s, null]);
+      }
+      continue;
+    }
     if (bodyA.label === 'orb' && bodyB.label === 'orb' && bodyA.tier === bodyB.tier) {
       queueMerge(bodyA, bodyB);
     }
@@ -181,7 +369,7 @@ Events.on(engine, 'collisionStart', ev => {
 });
 
 function mergeSweep() {
-  const os = orbs().filter(b => !b.dead);
+  const os = orbs().filter(b => !b.dead && !b.special);
   for (let i = 0; i < os.length; i++) {
     for (let j = i + 1; j < os.length; j++) {
       const a = os[i], b = os[j];
@@ -193,51 +381,87 @@ function mergeSweep() {
   }
 }
 
+function clampOutsidePlanets(x, y, r) {
+  for (const p of planets) {
+    const dx = x - p.body.position.x, dy = y - p.body.position.y;
+    const d = Math.hypot(dx, dy) || 1;
+    if (d < p.r + r) {
+      x = p.body.position.x + dx / d * (p.r + r + 1);
+      y = p.body.position.y + dy / d * (p.r + r + 1);
+    }
+  }
+  return { x, y };
+}
+
+// One merge resolution: effects, combo scoring, next-tier spawn, goal check.
+// Used by same-tier merges and by wild-orb hits.
+function completeMerge(tier, mx, my) {
+  if (settling) {
+    if (tier < MAX_TIER) {
+      const pos = clampOutsidePlanets(mx, my, orbRadius(tier + 1));
+      makeOrb(tier + 1, pos.x, pos.y);
+    }
+    return;
+  }
+  burst(mx, my, TIERS[tier].color, tier === MAX_TIER ? 70 : 14 + tier * 3);
+  const combo = bumpCombo();
+  addScore(TIERS[tier].pts * combo, mx, my, combo);
+  playMerge(tier, combo);
+  if (tier === MAX_TIER) {
+    setMood('wow', 3000);
+    splash('DOUBLE GALAXY!');
+    shake(9);
+    return;
+  }
+  const nt = tier + 1;
+  const pos = clampOutsidePlanets(mx, my, orbRadius(nt));
+  const o = makeOrb(nt, pos.x, pos.y);
+  o.popAt = performance.now();
+  markDiscovered(nt);
+  if (nt >= 5) setMood('happy', 1500);
+  if (nt === MAX_TIER) { setMood('wow', 3000); splash('GALAXY!'); shake(8); }
+  if (nt >= cfg.goalTier && state === 'playing') levelClear();
+}
+
 function processMerges() {
   while (pendingMerges.length) {
     const [a, b] = pendingMerges.shift();
-    let mx = (a.position.x + b.position.x) / 2;
-    let my = (a.position.y + b.position.y) / 2;
+    const mx = (a.position.x + b.position.x) / 2;
+    const my = (a.position.y + b.position.y) / 2;
     const tier = a.tier;
     Composite.remove(world, a);
     Composite.remove(world, b);
-    burst(mx, my, TIERS[tier].color, tier === MAX_TIER ? 70 : 14 + tier * 3);
-    addScore(TIERS[tier].pts, mx, my);
-    playMerge(tier);
-    if (tier < MAX_TIER) {
-      const nt = tier + 1;
-      const r = orbRadius(nt);
-      // keep the new orb outside the planet surface
-      const dx = mx - C.x, dy = my - C.y;
-      const d = Math.hypot(dx, dy) || 1;
-      if (d < planetR + r) {
-        mx = C.x + dx / d * (planetR + r + 1);
-        my = C.y + dy / d * (planetR + r + 1);
+    completeMerge(tier, mx, my);
+  }
+  while (pendingSpecials.length) {
+    const [s, other] = pendingSpecials.shift();
+    const sx = s.position.x, sy = s.position.y;
+    Composite.remove(world, s);
+    if (!other) {
+      // hit a planet or the moon: wild fizzles into a sparkle, smasher poofs
+      if (s.special === 'wild') {
+        const pos = clampOutsidePlanets(sx, sy, orbRadius(0));
+        const o = makeOrb(0, pos.x, pos.y);
+        o.popAt = performance.now();
+        burst(sx, sy, '#ffffff', 10);
+      } else {
+        burst(sx, sy, '#ff6b6b', 16);
       }
-      const o = makeOrb(nt, mx, my);
-      o.popAt = performance.now();
-      markDiscovered(nt);
-      if (nt >= goalTier && state === 'playing') levelClear();
+      continue;
+    }
+    const t = other.tier;
+    const ox = other.position.x, oy = other.position.y;
+    Composite.remove(world, other);
+    if (s.special === 'wild') {
+      burst(ox, oy, '#ffffff', 24);
+      completeMerge(t, ox, oy);
+    } else {
+      burst(ox, oy, '#ff6b6b', 30);
+      addScore(5, ox, oy, 1);
+      shake(6);
+      playSmash();
     }
   }
-}
-
-function levelClear() {
-  state = 'clear';
-  const bonus = 20 * level;
-  score += bonus;
-  scoreEl.textContent = score;
-  playLevelClear();
-  if (score > best) {
-    best = score;
-    localStorage.setItem('om-best', best);
-  }
-  bestEl.textContent = 'BEST ' + best;
-  overTitleEl.textContent = 'Level ' + level + ' Clear! 🎉';
-  finalEl.textContent = score;
-  bestNoteEl.textContent = '+' + bonus + ' level bonus';
-  againEl.textContent = 'Next Level';
-  overEl.classList.remove('hidden');
 }
 
 // ---- Aiming & firing ----------------------------------------------------
@@ -268,8 +492,18 @@ function fireToward(tx, ty) {
   const d = Math.hypot(dx, dy);
   if (d < 15) return false; // ignore stray taps on the launcher itself
   nextReadyAt = now + FIRE_COOLDOWN;
-  makeOrb(currentTier, launcher.x, launcher.y - orbRadius(currentTier) * 0.2,
-    dx / d * LAUNCH_SPEED, dy / d * LAUNCH_SPEED);
+  const vx = dx / d * LAUNCH_SPEED, vy = dy / d * LAUNCH_SPEED;
+  if (armed && inv[armed] > 0) {
+    const kind = armed;
+    inv[kind]--;
+    saveInv();
+    armed = null;
+    updatePw();
+    makeSpecial(kind, launcher.x, launcher.y - orbRadius(1) * 0.2, vx, vy);
+    playFire();
+    return true; // specials do not consume the regular queue
+  }
+  makeOrb(currentTier, launcher.x, launcher.y - orbRadius(currentTier) * 0.2, vx, vy);
   playFire();
   currentTier = nextTier;
   nextTier = randSpawnTier();
@@ -282,24 +516,32 @@ function previewPath(tx, ty) {
   const dx = tx - launcher.x, dy = ty - launcher.y;
   const d = Math.hypot(dx, dy);
   if (d < 15) return [];
-  let px = launcher.x, py = launcher.y - orbRadius(currentTier) * 0.2;
+  const r = armed ? orbRadius(1) : orbRadius(currentTier);
+  let px = launcher.x, py = launcher.y - r * 0.2;
   let vx = dx / d * LAUNCH_SPEED, vy = dy / d * LAUNCH_SPEED;
-  const r = orbRadius(currentTier);
   const pts = [];
   const os = orbs();
   for (let i = 0; i < 130; i++) {
-    const gx = C.x - px, gy = C.y - py;
-    const gd = Math.hypot(gx, gy) || 1;
-    vx = (vx + G * gx / gd) * DAMP;
-    vy = (vy + G * gy / gd) * DAMP;
+    const a = gravityAccel(px, py);
+    vx = (vx + a.x) * DAMP;
+    vy = (vy + a.y) * DAMP;
     px += vx;
     py += vy;
     if (i % 3 === 0) pts.push({ x: px, y: py });
-    if (gd < planetR + r) break; // would land on the planet
     let hit = false;
-    for (const o of os) {
-      const ox = o.position.x - px, oy = o.position.y - py;
-      if (ox * ox + oy * oy < (o.orbR + r) * (o.orbR + r)) { hit = true; break; }
+    for (const p of planets) {
+      const gx = p.body.position.x - px, gy = p.body.position.y - py;
+      if (Math.hypot(gx, gy) < p.r + r) { hit = true; break; }
+    }
+    if (!hit && moon) {
+      const gx = moon.position.x - px, gy = moon.position.y - py;
+      if (Math.hypot(gx, gy) < moon.circleRadius + r) hit = true;
+    }
+    if (!hit) {
+      for (const o of os) {
+        const ox = o.position.x - px, oy = o.position.y - py;
+        if (ox * ox + oy * oy < (o.orbR + r) * (o.orbR + r)) { hit = true; break; }
+      }
     }
     if (hit) break;
   }
@@ -326,6 +568,26 @@ function checkLose(now) {
   warning = danger;
 }
 
+function levelClear() {
+  state = 'clear';
+  const bonus = 20 * level;
+  score += bonus;
+  scoreEl.textContent = score;
+  playLevelClear();
+  setMood('wow', 3500);
+  earnSpecial('smash');
+  if (score > best) {
+    best = score;
+    localStorage.setItem('om-best', best);
+  }
+  bestEl.textContent = 'BEST ' + best;
+  overTitleEl.textContent = 'Level ' + level + ' Clear! 🎉';
+  finalEl.textContent = score;
+  bestNoteEl.textContent = '+' + bonus + ' level bonus';
+  againEl.textContent = 'Next Level';
+  overEl.classList.remove('hidden');
+}
+
 function gameOver() {
   state = 'over';
   playGameOver();
@@ -343,30 +605,41 @@ function gameOver() {
   overEl.classList.remove('hidden');
 }
 
-// Rebuild the board for the current level: swollen planet + a ring of debris
-// orbs. Debris tiers alternate 0/1/2 so no two touching pieces can merge.
+// Rebuild the board for the current level: world modifiers, planet(s), and a
+// ring of debris whose tiers cycle so no two touching pieces can merge.
 function resetBoard() {
   orbs().forEach(b => Composite.remove(world, b));
   pendingMerges.length = 0;
+  pendingSpecials.length = 0;
   particles.length = 0;
   popups.length = 0;
+  splashes.length = 0;
   state = 'playing';
   nextReadyAt = 0;
   aiming = false;
-  computeGoal();
+  armed = null;
+  comboCount = 0;
+  comboLastAt = -1e9;
+  cfg = levelConfig(level);
   layout();
-  buildPlanet();
-  const n = Math.min(1 + level, 10);
+  buildPlanets();
+  const n = cfg.debris;
+  const cycle = cfg.debrisMaxTier + 1;
   for (let i = 0; i < n; i++) {
-    const t = (i === n - 1 && n % 3 === 1) ? 1 : i % 3;
+    let t = i % cycle;
+    if (i === n - 1 && t === 0) t = 1; // avoid same-tier wrap neighbors
     const a = (i / n) * Math.PI * 2 - Math.PI / 2;
-    const d = planetR + orbRadius(t) + 2;
+    const d = planetR + orbRadius(t) + 6;
     makeOrb(t, C.x + Math.cos(a) * d, C.y + Math.sin(a) * d);
   }
-  for (let i = 0; i < 90; i++) tickPhysics(); // settle debris before play
+  settling = true;
+  for (let i = 0; i < 120; i++) { tickPhysics(); processMerges(); }
+  settling = false;
   rollQueue();
   updateLevelHud();
+  updatePw();
   overEl.classList.add('hidden');
+  splash('LEVEL ' + level + (cfg.label ? ' · ' + cfg.label : ''));
 }
 
 againEl.addEventListener('click', () => {
@@ -423,10 +696,12 @@ function tone(freq, dur, type, gain, glide) {
 }
 
 function playFire() { tone(500, 0.12, 'sine', 0.09, 900); }
-function playMerge(tier) {
-  tone(320 + tier * 70, 0.18, 'sine', 0.16, 640 + tier * 140);
+function playMerge(tier, combo) {
+  const boost = (combo - 1) * 45;
+  tone(320 + tier * 70 + boost, 0.18, 'sine', 0.16, 640 + tier * 140 + boost);
   if (tier === MAX_TIER) { tone(523, 0.5, 'triangle', 0.2, 1568); }
 }
+function playSmash() { tone(180, 0.22, 'sawtooth', 0.16, 55); }
 function playGameOver() { tone(340, 0.6, 'sawtooth', 0.1, 80); }
 function playLevelClear() {
   [523, 659, 784, 1046].forEach((f, i) => setTimeout(() => tone(f, 0.2, 'triangle', 0.18), i * 110));
@@ -465,44 +740,78 @@ function drawOrb(x, y, angle, tier, r, scale) {
   ctx.restore();
 }
 
-function drawPlanet(now) {
-  const breathe = 1 + Math.sin(now / 900) * 0.012;
+function drawSpecialOrb(x, y, kind, r, now) {
   ctx.save();
-  ctx.translate(C.x, C.y);
-  ctx.scale(breathe, breathe);
-  const glow = ctx.createRadialGradient(0, 0, planetR * 0.4, 0, 0, planetR * 2.2);
-  glow.addColorStop(0, 'rgba(123, 92, 214, .35)');
-  glow.addColorStop(1, 'rgba(123, 92, 214, 0)');
+  ctx.translate(x, y);
+  const glowColor = kind === 'wild' ? '255, 255, 255' : '255, 107, 107';
+  const glow = ctx.createRadialGradient(0, 0, r * 0.2, 0, 0, r * 1.5);
+  glow.addColorStop(0, `rgba(${glowColor}, .4)`);
+  glow.addColorStop(1, `rgba(${glowColor}, 0)`);
   ctx.beginPath();
-  ctx.arc(0, 0, planetR * 2.2, 0, Math.PI * 2);
+  ctx.arc(0, 0, r * 1.5, 0, Math.PI * 2);
   ctx.fillStyle = glow;
   ctx.fill();
-  const grad = ctx.createRadialGradient(-planetR * 0.35, -planetR * 0.35, planetR * 0.1, 0, 0, planetR);
-  grad.addColorStop(0, '#b8a4f0');
-  grad.addColorStop(1, '#6c4fc4');
   ctx.beginPath();
-  ctx.arc(0, 0, planetR, 0, Math.PI * 2);
-  ctx.fillStyle = grad;
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.fillStyle = kind === 'wild' ? 'rgba(255,255,255,.22)' : 'rgba(255,107,107,.22)';
   ctx.fill();
-  // sleepy face
+  ctx.strokeStyle = kind === 'wild' ? `hsl(${(now / 6) % 360} 85% 70%)` : '#ff6b6b';
+  ctx.lineWidth = Math.max(2, r * 0.12);
+  ctx.stroke();
+  ctx.font = `${Math.round(r * 1.1)}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(kind === 'wild' ? '🌈' : '💥', 0, r * 0.05);
+  ctx.restore();
+}
+
+function drawFace(r, mood) {
+  const e = r * 0.22;
   ctx.strokeStyle = '#2d1b5e';
-  ctx.lineWidth = 2;
+  ctx.lineWidth = Math.max(2, r * 0.055);
   ctx.lineCap = 'round';
-  const e = planetR * 0.22;
-  ctx.beginPath();
-  ctx.arc(-e * 1.4, -e * 0.4, e * 0.55, 0.15 * Math.PI, 0.85 * Math.PI);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.arc(e * 1.4, -e * 0.4, e * 0.55, 0.15 * Math.PI, 0.85 * Math.PI);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.arc(0, e * 0.9, e * 0.5, 0.1 * Math.PI, 0.9 * Math.PI);
-  ctx.stroke();
-  // Lisa's crown
+  if (mood === 'sleep') {
+    for (const s of [-1, 1]) {
+      ctx.beginPath();
+      ctx.arc(s * e * 1.4, -e * 0.4, e * 0.55, 0.15 * Math.PI, 0.85 * Math.PI);
+      ctx.stroke();
+    }
+    ctx.beginPath();
+    ctx.arc(0, e * 0.9, e * 0.5, 0.1 * Math.PI, 0.9 * Math.PI);
+    ctx.stroke();
+    return;
+  }
+  for (const s of [-1, 1]) {
+    ctx.beginPath();
+    ctx.arc(s * e * 1.4, -e * 0.5, mood === 'wow' ? e * 0.62 : e * 0.5, 0, Math.PI * 2);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(s * e * 1.4, -e * 0.45, mood === 'wow' ? e * 0.3 : e * 0.24, 0, Math.PI * 2);
+    ctx.fillStyle = '#2d1b5e';
+    ctx.fill();
+  }
+  if (mood === 'happy') {
+    ctx.beginPath();
+    ctx.arc(0, e * 0.7, e * 0.65, 0.08 * Math.PI, 0.92 * Math.PI);
+    ctx.stroke();
+  } else if (mood === 'wow') {
+    ctx.beginPath();
+    ctx.arc(0, e * 1.0, e * 0.45, 0, Math.PI * 2);
+    ctx.stroke();
+  } else { // worry
+    ctx.beginPath();
+    ctx.moveTo(-e * 0.5, e * 1.05);
+    ctx.quadraticCurveTo(0, e * 0.7, e * 0.5, e * 1.05);
+    ctx.stroke();
+  }
+}
+
+function drawCrown(r) {
   ctx.save();
   ctx.rotate(-0.3);
-  ctx.translate(0, -planetR * 1.04);
-  const cw = planetR * 0.56, ch = planetR * 0.36;
+  ctx.translate(0, -r * 1.04);
+  const cw = r * 0.56, ch = r * 0.36;
   ctx.fillStyle = '#ffd166';
   ctx.beginPath();
   ctx.moveTo(-cw / 2, 0);
@@ -515,12 +824,61 @@ function drawPlanet(now) {
   ctx.closePath();
   ctx.fill();
   ctx.restore();
+}
+
+function drawPlanet(p, now, mood) {
+  const skin = PLANET_SKINS[p.main ? 0 : 1];
+  const breathe = 1 + Math.sin(now / 900) * 0.012;
+  ctx.save();
+  ctx.translate(p.body.position.x, p.body.position.y);
+  ctx.scale(breathe, breathe);
+  const glow = ctx.createRadialGradient(0, 0, p.r * 0.4, 0, 0, p.r * 2.2);
+  glow.addColorStop(0, `rgba(${skin.glow}, .35)`);
+  glow.addColorStop(1, `rgba(${skin.glow}, 0)`);
+  ctx.beginPath();
+  ctx.arc(0, 0, p.r * 2.2, 0, Math.PI * 2);
+  ctx.fillStyle = glow;
+  ctx.fill();
+  const grad = ctx.createRadialGradient(-p.r * 0.35, -p.r * 0.35, p.r * 0.1, 0, 0, p.r);
+  grad.addColorStop(0, skin.top);
+  grad.addColorStop(1, skin.bottom);
+  ctx.beginPath();
+  ctx.arc(0, 0, p.r, 0, Math.PI * 2);
+  ctx.fillStyle = grad;
+  ctx.fill();
+  drawFace(p.r, mood);
+  if (p.main) drawCrown(p.r);
+  ctx.restore();
+}
+
+function drawMoon() {
+  if (!moon) return;
+  const r = moon.circleRadius;
+  ctx.save();
+  ctx.translate(moon.position.x, moon.position.y);
+  const grad = ctx.createRadialGradient(-r * 0.3, -r * 0.3, r * 0.1, 0, 0, r);
+  grad.addColorStop(0, '#e8e8f0');
+  grad.addColorStop(1, '#9aa0b4');
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.fillStyle = grad;
+  ctx.fill();
+  ctx.fillStyle = 'rgba(80, 86, 110, .35)';
+  for (const [cx, cy, cr] of [[-r * 0.3, -r * 0.1, r * 0.22], [r * 0.25, r * 0.3, r * 0.16], [r * 0.1, -r * 0.4, r * 0.12]]) {
+    ctx.beginPath();
+    ctx.arc(cx, cy, cr, 0, Math.PI * 2);
+    ctx.fill();
+  }
   ctx.restore();
 }
 
 function render(now) {
   ctx.fillStyle = '#0b0d2a';
   ctx.fillRect(0, 0, W, H);
+  ctx.save();
+  if (now < shakeUntil) {
+    ctx.translate((Math.random() - 0.5) * shakeAmp, (Math.random() - 0.5) * shakeAmp);
+  }
 
   // starfield
   for (const s of stars) {
@@ -542,10 +900,20 @@ function render(now) {
   ctx.stroke();
   ctx.setLineDash([]);
 
-  drawPlanet(now);
+  const mood = currentMood(now);
+  for (const p of planets) drawPlanet(p, now, mood);
+  drawMoon();
 
-  // orbs
+  // orbs (+ flight trails for fast ones)
   for (const o of orbs()) {
+    if (o.special) {
+      drawSpecialOrb(o.position.x, o.position.y, o.special, o.orbR, now);
+      continue;
+    }
+    const speed = Math.hypot(o.velocity.x, o.velocity.y);
+    if (speed > 5 && frame % 2 === 0) {
+      particles.push({ x: o.position.x, y: o.position.y, vx: 0, vy: 0, life: 0.35, color: TIERS[o.tier].color });
+    }
     let scale = 1;
     if (o.popAt) {
       const t = (now - o.popAt) / 160;
@@ -579,7 +947,11 @@ function render(now) {
   ctx.stroke();
   ctx.restore();
   if (state === 'playing' && performance.now() >= nextReadyAt) {
-    drawOrb(launcher.x, launcher.y - orbRadius(currentTier) * 0.2, 0, currentTier, orbRadius(currentTier), 1);
+    if (armed) {
+      drawSpecialOrb(launcher.x, launcher.y - orbRadius(1) * 0.2, armed, orbRadius(1), now);
+    } else {
+      drawOrb(launcher.x, launcher.y - orbRadius(currentTier) * 0.2, 0, currentTier, orbRadius(currentTier), 1);
+    }
   }
 
   // particles
@@ -607,16 +979,32 @@ function render(now) {
     ctx.fillText(p.txt, p.x, p.y - t * 40);
   }
   ctx.globalAlpha = 1;
+
+  // splash banners
+  for (let i = splashes.length - 1; i >= 0; i--) {
+    const s = splashes[i];
+    const t = (now - s.t0) / 1500;
+    if (t >= 1) { splashes.splice(i, 1); continue; }
+    const sc = Math.min(1, t * 4);
+    ctx.save();
+    ctx.translate(C.x, C.y - dangerR - 36);
+    ctx.scale(sc, sc);
+    ctx.globalAlpha = t < 0.7 ? 1 : 1 - (t - 0.7) / 0.3;
+    ctx.font = '800 24px -apple-system, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ffd166';
+    ctx.shadowColor = 'rgba(255, 209, 102, .6)';
+    ctx.shadowBlur = 14;
+    ctx.fillText(s.txt, 0, 0);
+    ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
 }
 
 // ---- Main loop ----------------------------------------------------------
 let lastT = performance.now();
 let acc = 0;
-
-function tickPhysics() {
-  applyGravity();
-  Engine.update(engine, STEP);
-}
 
 function loop(now) {
   requestAnimationFrame(loop);
@@ -657,7 +1045,7 @@ function boot() {
   requestAnimationFrame(loop);
 }
 
-window.addEventListener('resize', () => { layout(); buildPlanet(); });
+window.addEventListener('resize', () => { layout(); buildPlanets(); });
 
 if ('serviceWorker' in navigator && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
   navigator.serviceWorker.register('sw.js').catch(() => {});
@@ -667,17 +1055,26 @@ if ('serviceWorker' in navigator && location.hostname !== 'localhost' && locatio
 window.__dbg = {
   fire: (tx, ty) => fireToward(tx, ty),
   spawnAt: (tier, x, y) => makeOrb(tier, x, y),
+  spawnSpecialAt: (kind, x, y, vx, vy) => makeSpecial(kind, x, y, vx || 0, vy || 0),
   orbs: () => orbs().map(o => ({
     tier: o.tier,
+    special: o.special || null,
     x: Math.round(o.position.x),
     y: Math.round(o.position.y),
     d: Math.round(Math.hypot(o.position.x - C.x, o.position.y - C.y)),
   })),
   geom: () => ({ C, dangerR, planetR, launcher }),
+  planets: () => planets.map(p => ({ x: Math.round(p.body.position.x), y: Math.round(p.body.position.y), r: Math.round(p.r), main: p.main })),
+  moon: () => moon ? { x: Math.round(moon.position.x), y: Math.round(moon.position.y) } : null,
+  config: () => cfg,
   score: () => score,
   state: () => state,
   level: () => level,
-  goalTier: () => goalTier,
+  combo: () => comboCount,
+  mood: () => currentMood(performance.now()),
+  inv: () => ({ ...inv }),
+  setInv(w, s) { inv.wild = w; inv.smash = s; saveInv(); updatePw(); },
+  arm(kind) { armed = kind; updatePw(); },
   setLevel(n) { level = Math.max(1, n | 0); localStorage.setItem('om-level', level); resetBoard(); },
   restart: resetBoard,
   aim(x, y, on) { aiming = !!on; aimPt = { x, y }; },

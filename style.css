@@ -52,6 +52,58 @@ html, body {
   text-shadow: 0 0 10px rgba(255, 209, 102, .35);
 }
 
+.hud-left #world {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  color: #c77dff;
+  margin-top: 2px;
+}
+
+#powerups {
+  position: fixed;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 62px);
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+  gap: 150px;
+  pointer-events: none;
+}
+
+#powerups button {
+  pointer-events: auto;
+  position: relative;
+  background: rgba(255,255,255,.07);
+  border: 2px solid rgba(178,152,220,.5);
+  border-radius: 14px;
+  font-size: 17px;
+  width: 46px;
+  height: 46px;
+  cursor: pointer;
+}
+
+#powerups button b {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  background: #7b5cd6;
+  color: #fff;
+  border-radius: 10px;
+  font-size: 11px;
+  font-style: normal;
+  min-width: 18px;
+  height: 18px;
+  line-height: 18px;
+}
+
+#powerups button.armed {
+  border-color: #ffd166;
+  box-shadow: 0 0 14px rgba(255, 209, 102, .5);
+}
+
+#powerups button.empty { opacity: .35; }
+
 .hud-right {
   display: flex;
   align-items: center;
