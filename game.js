@@ -47,7 +47,7 @@ function layout() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
   C = { x: W / 2, y: H * 0.40 };
-  dangerR = Math.min(W / 2 - 16, H * 0.29);
+  dangerR = Math.min(W / 2 - 44, H * 0.27);
   planetR = Math.max(28, dangerR * 0.21);
   launcher = { x: W / 2, y: H - Math.max(96, H * 0.115) };
 
